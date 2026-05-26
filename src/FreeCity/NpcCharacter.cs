@@ -29,20 +29,45 @@ public class NpcCharacter
     private static int _nextId;
     private static readonly HeroProgress EmptyProgress = new();
     private readonly Random _rng;
+    private Vector3 _color;
+    private Vector3 _headColor;
+    private Vector3 _pantsColor;
+    private Vector3 _hairColor;
+    private float _height = 1.7f;
 
     public int Id;
     public string Name;
     public Vector3 Position;
     public Vector3 Velocity;
-    public Vector3 Color;
-    public Vector3 HeadColor;
-    public Vector3 PantsColor;
-    public Vector3 HairColor;
+    public Vector3 Color
+    {
+        get => _color;
+        set => _color = HeroStyle.IsHero(this) ? HeroStyle.ShirtBlue : value;
+    }
+    public Vector3 HeadColor
+    {
+        get => _headColor;
+        set => _headColor = HeroStyle.IsHero(this) ? HeroStyle.Skin : value;
+    }
+    public Vector3 PantsColor
+    {
+        get => _pantsColor;
+        set => _pantsColor = HeroStyle.IsHero(this) ? HeroStyle.Pants : value;
+    }
+    public Vector3 HairColor
+    {
+        get => _hairColor;
+        set => _hairColor = HeroStyle.IsHero(this) ? HeroStyle.Hair : value;
+    }
     public float Rotation;
     public float TargetRotation;
     public NpcState State = NpcState.Walking;
     public float Awareness;
-    public float Height = 1.7f;
+    public float Height
+    {
+        get => _height;
+        set => _height = HeroStyle.IsHero(this) ? HeroStyle.Height : value;
+    }
 
     // Анимация
     public float AnimPhase;
@@ -101,6 +126,7 @@ public class NpcCharacter
             0.04f + (float)_rng.NextDouble() * 0.08f,
             0.025f + (float)_rng.NextDouble() * 0.05f
         );
+        if (HeroStyle.IsHero(this)) HeroStyle.ApplyTo(this);
 
         _shopsAfterWork = _rng.NextDouble() < 0.45;
         _shoppingStart = WorkEnd + 0.2f + (float)_rng.NextDouble() * 1.2f;
