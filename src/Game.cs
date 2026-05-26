@@ -475,13 +475,13 @@ public class Game : GameWindow
     private void RenderHeroPreview(float cx, float y, float scale)
     {
         float s = 0.18f * scale;
-        Vector3 skin = new(0.90f, 0.68f, 0.48f);
-        Vector3 skinShadow = new(0.78f, 0.55f, 0.38f);
-        Vector3 shirt = new(0.15f, 0.44f, 0.88f);
-        Vector3 shirtDark = new(0.08f, 0.24f, 0.48f);
-        Vector3 shirtLight = new(0.30f, 0.62f, 0.96f);
-        Vector3 pants = new(0.07f, 0.09f, 0.14f);
-        Vector3 hair = new(0.08f, 0.055f, 0.035f);
+        Vector3 skin = HeroStyle.Skin;
+        Vector3 skinShadow = skin * 0.85f;
+        Vector3 shirt = HeroStyle.ShirtBlue;
+        Vector3 shirtDark = HeroStyle.ShirtDark;
+        Vector3 shirtLight = HeroStyle.ShirtLight;
+        Vector3 pants = HeroStyle.Pants;
+        Vector3 hair = HeroStyle.Hair;
         Vector3 shoes = new(0.025f, 0.025f, 0.03f);
         Vector3 eye = new(0.03f, 0.03f, 0.06f);
 
