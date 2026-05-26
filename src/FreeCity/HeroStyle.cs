@@ -17,4 +17,14 @@ public static class HeroStyle
     public static readonly Vector3 Accent = new(0.25f, 0.85f, 1.0f);
 
     public static bool IsHero(NpcCharacter npc) => npc.Id == 0 || npc.Name == Name;
+
+    public static void ApplyTo(NpcCharacter hero)
+    {
+        hero.Name = Name;
+        hero.Height = Height;
+        hero.Color = ShirtBlue;
+        hero.HeadColor = Skin;
+        hero.PantsColor = Pants;
+        hero.HairColor = Hair;
+    }
 }
