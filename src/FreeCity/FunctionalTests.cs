@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using OpenTK.Mathematics;
+using Probuzhdenie.Player;
 
 namespace Probuzhdenie.FreeCity;
 
@@ -18,6 +19,7 @@ public static class FunctionalTests
         CheckCityRules(failures);
         CheckCollisionDetection(failures);
         CheckInterestMarkerDefaults(failures);
+        CheckPlayerController(failures);
 
         if (!SaveSystem.RunSelfTest(out string saveMessage))
             failures.Add(saveMessage);
@@ -154,6 +156,36 @@ public static class FunctionalTests
         Expect(roadWalkable, "position on road is walkable", failures);
         Vector3 inRoadBuilding = city.ClampToWalkable(onRoad, 0f);
         Expect(inRoadBuilding == onRoad, "ClampToWalkable does not move road position", failures);
+    }
+
+    private static void CheckPlayerController(List<string> failures)
+    {
+        // Full movement tests need Input (requires GameWindow) — only
+        // possible in the graphical environment. Here we test ResetMotion
+        // on the real player and verify no crash with null Input.
+        var progress = new HeroProgress();
+        var city = new CityRenderer(seed: 4242, progress);
+        var cam = new Camera();
+        cam.Front = -Vector3.UnitZ;
+        cam.Right = Vector3.UnitX;
+
+        if (city.Player == null) return;
+        var player = city.Player;
+        var controller = new PlayerController(city, null!, cam);
+
+        // With null Input, all keys read as false → no movement → idle
+        controller.Update(0.016f);
+        Expect(controller.CurrentState == PlayerState.Idle, "PlayerController idle with no input state", failures);
+        Expect(controller.CurrentSpeed < 0.001f, "PlayerController speed zero with no input", failures);
+
+        // ResetMotion clears everything
+        player.Velocity = new Vector3(5f, 0, 3f);
+        player.State = NpcState.Walking;
+        controller.ResetMotion();
+        Expect(controller.CurrentSpeed < 0.001f, "ResetMotion clears speed", failures);
+        Expect(player.Velocity == Vector3.Zero, "ResetMotion zeroes velocity", failures);
+        Expect(player.State == NpcState.Relaxing, "ResetMotion sets NpcState.Relaxing", failures);
+        Expect(controller.CurrentState == PlayerState.Idle, "ResetMotion sets PlayerState.Idle", failures);
     }
 
     private static void CheckInterestMarkerDefaults(List<string> failures)

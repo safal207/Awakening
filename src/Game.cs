@@ -30,7 +30,6 @@ public class Game : GameWindow
     private const float ZoomSpeed = 18f;
     private const float WalkSpeed = 8f;
     private const float AutoSaveIntervalSeconds = 30f;
-    private const float NpcInteractionRange = 3f;
 
     private readonly Camera _cam = new();
     private readonly Input _input;
@@ -58,6 +57,8 @@ public class Game : GameWindow
     private int _dialogueChoiceIndex;
     private double _profileElapsedSeconds;
     private PlayerController? _playerController;
+    private InteractionDetector? _interactionDetector;
+    private InteractionResult _currentInteraction;
     private float _camDist = 14f, _camYaw, _camPitchDegrees = DefaultCameraPitchDegrees;
 
     public Game(RuntimeProfileOptions? profileOptions = null) : base(
@@ -128,6 +129,7 @@ public class Game : GameWindow
         }
 
         _playerController = new PlayerController(_city, _input, _cam);
+        _interactionDetector = new InteractionDetector(_city);
 
         if (_runtimeProfiler != null)
         {
@@ -184,26 +186,35 @@ public class Game : GameWindow
             UpdateThirdPerson(dt);
         }
 
+        if (_city?.Player != null && _dialogueNpc == null)
+            _currentInteraction = _interactionDetector?.Detect(_city.Player.Position) ?? default;
+        else
+            _currentInteraction = default;
+
         _city?.UpdateNpcs(dt);
 
-        // Вход/выход из зданий (E)
-        if (_city?.Player != null && _input.KeyPressed(Keys.E) && _dialogueNpc == null)
+        // Универсальная интеракция (E): поговорить, войти, выйти
+        if (_city?.Player != null && _input.KeyPressed(Keys.E) && _dialogueNpc == null && _dialogueTimer <= 0)
         {
-            if (_city.IsInside)
+            switch (_currentInteraction.Type)
             {
-                _city.Player.Position = _city.ExitInterior();
-                _playerController?.ResetMotion();
-                SnapCameraBehindHero();
-            }
-            else
-            {
-                var enterPos = _city.TryEnterInterior(_city.Player.Position);
-                if (enterPos.HasValue)
-                {
-                    _city.Player.Position = enterPos.Value;
+                case InteractionType.Exit:
+                    _city.Player.Position = _city.ExitInterior();
                     _playerController?.ResetMotion();
                     SnapCameraBehindHero();
-                }
+                    break;
+                case InteractionType.Enter:
+                    var enterPos = _city.TryEnterInterior(_city.Player.Position);
+                    if (enterPos.HasValue)
+                    {
+                        _city.Player.Position = enterPos.Value;
+                        _playerController?.ResetMotion();
+                        SnapCameraBehindHero();
+                    }
+                    break;
+                case InteractionType.Talk:
+                    StartDialogue(_currentInteraction.TargetNpc!);
+                    break;
             }
         }
 
@@ -243,27 +254,11 @@ public class Game : GameWindow
 
             if (_city?.Player != null && (_input.LmbPressed || _input.GpAPressed) && _dialogueTimer <= 0)
             {
-                var target = _city.FindClosestNpc(_city.Player.Position, NpcInteractionRange);
-                if (target != null)
-                {
-                    var (npcLine, choices) = target.GetDialogueState(_city.Awareness.Level, _city.Progress);
-                    _dialogueNpc = target;
-                    _dialogueNpcLine = npcLine;
-                    _dialogueChoices = choices;
-                    _dialogueChoiceIndex = 0;
-                    _captured = false;
-                    CursorState = CursorState.Normal;
-                    _input.ResetMouse();
-                    _dialogueNpc.LastTalkDay = _city.Progress.Day;
-                }
-                else
-                {
-                    _lastDialogue = _city.GetPlayerDialogue();
-                    Title = $"{GameTitle} - {_lastDialogue}";
-                    _dialogueTimer = 3f;
-                    _city.Awareness.Add(2f);
-                    _city.RegisterTalk();
-                }
+                _lastDialogue = _city.GetPlayerDialogue();
+                Title = $"{GameTitle} - {_lastDialogue}";
+                _dialogueTimer = 3f;
+                _city.Awareness.Add(2f);
+                _city.RegisterTalk();
             }
         }
     }
@@ -335,6 +330,19 @@ public class Game : GameWindow
         _captured = true;
         CursorState = CursorState.Grabbed;
         _input.ResetMouse();
+    }
+
+    private void StartDialogue(NpcCharacter target)
+    {
+        var (npcLine, choices) = target.GetDialogueState(_city!.Awareness.Level, _city.Progress);
+        _dialogueNpc = target;
+        _dialogueNpcLine = npcLine;
+        _dialogueChoices = choices;
+        _dialogueChoiceIndex = 0;
+        _captured = false;
+        CursorState = CursorState.Normal;
+        _input.ResetMouse();
+        _dialogueNpc.LastTalkDay = _city.Progress.Day;
     }
 
     private void SnapCameraBehindHero()
@@ -585,6 +593,18 @@ public class Game : GameWindow
             _ui.Rect(0.014f, 0.825f, msgWidth, 0.056f, panel);
             _ui.Rect(0.014f, 0.825f, 0.006f, 0.056f, warm);
             _ui.Text(msg, 0.028f, 0.842f, msgSize, warm);
+        }
+
+        // Interaction prompt
+        if (_currentInteraction.Type != InteractionType.None && _dialogueNpc == null)
+        {
+            float pSize = 0.005f;
+            float pWidth = _ui.MeasureText(_currentInteraction.Prompt, pSize);
+            float ppx = 0.5f - pWidth / 2f;
+            float ppy = 0.73f;
+            _ui.Rect(ppx - 0.01f, ppy - 0.005f, pWidth + 0.02f, 0.044f, panel);
+            _ui.Rect(ppx - 0.01f, ppy - 0.005f, 0.006f, 0.044f, accent);
+            _ui.Text(_currentInteraction.Prompt, ppx, ppy + 0.004f, pSize, textCol);
         }
 
         RenderMiniMap();

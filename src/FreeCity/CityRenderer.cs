@@ -119,6 +119,19 @@ public class CityRenderer : IDisposable
         return new Vector3(doorX, 0, doorZ + 2f);
     }
 
+    public bool IsNearDoor(Vector3 pos, float maxDist)
+    {
+        foreach (var block in _blocks)
+        {
+            if (block.Type == BuildingType.Tree || block.Type == BuildingType.Lamp) continue;
+            float doorX = block.X + block.Width * 0.5f;
+            float doorZ = block.Z + block.Depth;
+            float dist = Vector3.Distance(new Vector3(doorX, 0, doorZ), new Vector3(pos.X, 0, pos.Z));
+            if (dist <= maxDist) return true;
+        }
+        return false;
+    }
+
     public string InteriorName()
     {
         if (_insideBlock == null) return "";

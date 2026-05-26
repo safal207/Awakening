@@ -14,7 +14,7 @@ public sealed class PlayerController
     private const float RotSpeed = 8f;
 
     private readonly CityRenderer _city;
-    private readonly Input _input;
+    private readonly Input? _input;
     private readonly Camera _cam;
 
     private Vector3 _targetVel;
@@ -50,14 +50,17 @@ public sealed class PlayerController
 
         // Read input intent
         Vector3 move = Vector3.Zero;
-        if (_input.KeyDown(Keys.W)) move += fwd;
-        if (_input.KeyDown(Keys.S)) move -= fwd;
-        if (_input.KeyDown(Keys.A)) move -= right;
-        if (_input.KeyDown(Keys.D)) move += right;
-        if (_input.GpConnected)
-            move += fwd * (-_input.GpLeftY) + right * _input.GpLeftX;
+        if (_input != null)
+        {
+            if (_input.KeyDown(Keys.W)) move += fwd;
+            if (_input.KeyDown(Keys.S)) move -= fwd;
+            if (_input.KeyDown(Keys.A)) move -= right;
+            if (_input.KeyDown(Keys.D)) move += right;
+            if (_input.GpConnected)
+                move += fwd * (-_input.GpLeftY) + right * _input.GpLeftX;
+        }
 
-        bool sprint = _input.KeyDown(Keys.LeftShift) || _input.GpSprintHeld;
+        bool sprint = _input != null && (_input.KeyDown(Keys.LeftShift) || _input.GpSprintHeld);
 
         // Apply movement
         if (move.LengthSquared > 0.1f)
