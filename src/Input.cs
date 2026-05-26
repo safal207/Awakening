@@ -89,7 +89,23 @@ public class Input
     }
 
     public bool KeyDown(Keys key) => IsTracked(key) && _currentKeys[(int)key];
-    public bool KeyPressed(Keys key) => IsTracked(key) && _currentKeys[(int)key] && !_previousKeys[(int)key];
+
+    public bool KeyPressed(Keys key)
+    {
+        if (!IsTracked(key)) return false;
+
+        bool physicalKeyPressed = _currentKeys[(int)key] && !_previousKeys[(int)key];
+        if (key != Keys.E) return physicalKeyPressed;
+
+        if (physicalKeyPressed || LmbPressed) return true;
+        if (!GpAPressed) return false;
+
+        // Reuse the existing E interaction path for gamepad A, but prevent
+        // the same press from immediately confirming the newly opened dialogue.
+        GpAPressed = false;
+        return true;
+    }
+
     public void ResetMouse() => _first = true;
 
     private static bool IsTracked(Keys key) => (int)key >= 0 && (int)key <= (int)Keys.LastKey;
