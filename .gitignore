@@ -1,0 +1,65 @@
+## .NET gitignore
+
+# Build results
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Ww][Ii][Nn]32/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+bld/
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]ogs/
+
+# Visual Studio
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.userprefs
+
+# Rider
+.idea/
+*.sln.iml
+
+# NuGet
+*.nupkg
+*.snupkg
+.nuget/
+packages/
+!packages/repositories.config
+*.nuspec
+project.lock.json
+project.fragment.lock.json
+artifacts/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Runtime artifacts & profiling output
+runtime-profile-*.json
+runtime-profile-*.out
+runtime-profile-*.err
+runtime-profile-*.pid
+*.profile.json
+
+# Publish
+publish/
+**/publish/
+
+# dotnet tools
+.config/dotnet-tools.json
+
+# Test results
+TestResults/
+coverage/
+*.coveragexml
+
+# Crash dumps
+*.dmp
