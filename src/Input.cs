@@ -12,6 +12,8 @@ public class Input
     private readonly bool[] _previousKeys = new bool[(int)Keys.LastKey + 1];
     private bool _first = true;
     private Vector2 _last;
+    private int _wheelZoomInFrames;
+    private int _wheelZoomOutFrames;
     public float Dx { get; private set; }
     public float Dy { get; private set; }
     public float ScrollDeltaY { get; private set; }
@@ -48,6 +50,10 @@ public class Input
         Dx = m.X - _last.X; Dy = m.Y - _last.Y;
         _last = new Vector2(m.X, m.Y);
         ScrollDeltaY = m.ScrollDelta.Y;
+        if (ScrollDeltaY > 0.001f)
+            _wheelZoomInFrames = Math.Min(30, _wheelZoomInFrames + (int)MathF.Ceiling(ScrollDeltaY * 8f));
+        else if (ScrollDeltaY < -0.001f)
+            _wheelZoomOutFrames = Math.Min(30, _wheelZoomOutFrames + (int)MathF.Ceiling(-ScrollDeltaY * 8f));
 
         bool left = m.IsButtonDown(MouseButton.Left);
         bool right = m.IsButtonDown(MouseButton.Right);
@@ -90,7 +96,21 @@ public class Input
         catch { }
     }
 
-    public bool KeyDown(Keys key) => IsTracked(key) && _currentKeys[(int)key];
+    public bool KeyDown(Keys key)
+    {
+        if (!IsTracked(key)) return false;
+        if (key == Keys.J && _wheelZoomInFrames > 0)
+        {
+            _wheelZoomInFrames--;
+            return true;
+        }
+        if (key == Keys.K && _wheelZoomOutFrames > 0)
+        {
+            _wheelZoomOutFrames--;
+            return true;
+        }
+        return _currentKeys[(int)key];
+    }
 
     public bool KeyPressed(Keys key)
     {
