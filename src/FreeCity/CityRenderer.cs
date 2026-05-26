@@ -1099,6 +1099,53 @@ public class CityRenderer : IDisposable
             AddSphere(rightShoulderX - armOffX, wristY - handR * 0.2f, pz - armOffZ, handR,
                 armCr, armCg, armCb, 8, 4);
 
+            // === HERO OUTFIT DETAILS ===
+            if (npc == _player)
+            {
+                // Collar at neck base
+                float collarY = shoulderY + bob;
+                float collarH = h * 0.03f;
+                AddTube(px, collarY, pz, neckR * 0.9f, neckR * 1.3f, collarH,
+                    HeroStyle.ShirtLight.X * 0.8f, HeroStyle.ShirtLight.Y * 0.8f, HeroStyle.ShirtLight.Z * 0.8f, 8);
+
+                // Belt at waist
+                float beltY = hipY + hipToWaist + bob;
+                float beltH = h * 0.02f;
+                AddTube(px, beltY, pz, waistR * 1.05f, waistR * 1.05f, beltH,
+                    HeroStyle.Belt.X, HeroStyle.Belt.Y, HeroStyle.Belt.Z, 12);
+
+                // Belt buckle
+                float buckleW = h * 0.025f;
+                float buckleZ = pz + waistR * 1.02f;
+                EmitBox(px - buckleW, beltY, buckleZ, px + buckleW, beltY, buckleZ,
+                        px + buckleW, beltY + beltH, buckleZ, px - buckleW, beltY + beltH, buckleZ,
+                        HeroStyle.Accent.X, HeroStyle.Accent.Y, HeroStyle.Accent.Z, 1.0f, 0, 0, 1);
+
+                // Shirt buttons
+                float btnR = h * 0.008f;
+                int btnCount = 3;
+                float btnStartY = shoulderY - torsoH * 0.1f + bob;
+                float btnEndY = hipY + hipToWaist + beltH + bob;
+                for (int i = 0; i < btnCount; i++)
+                {
+                    float t = (i + 1f) / (btnCount + 1);
+                    float btnY = btnStartY + (btnEndY - btnStartY) * t;
+                    AddSphere(px, btnY, pz + chestR * 1.02f, btnR,
+                        HeroStyle.ShirtLight.X * 0.7f, HeroStyle.ShirtLight.Y * 0.7f, HeroStyle.ShirtLight.Z * 0.7f, 6, 3);
+                }
+
+                // Cyan badge on left chest
+                float badgeS = h * 0.015f;
+                float badgeX = px - chestR * 0.3f;
+                float badgeY = shoulderY - torsoH * 0.25f + bob;
+                float badgeZ = pz + chestR * 1.02f;
+                EmitBox(badgeX - badgeS, badgeY, badgeZ,
+                        badgeX + badgeS, badgeY, badgeZ,
+                        badgeX + badgeS, badgeY + badgeS * 1.5f, badgeZ,
+                        badgeX - badgeS, badgeY + badgeS * 1.5f, badgeZ,
+                        HeroStyle.Accent.X, HeroStyle.Accent.Y, HeroStyle.Accent.Z, 1.0f, 0, 0, 1);
+            }
+
             if (npc == _player && npc.State == NpcState.Aware)
             {
                 float ringY = py + h * 0.018f;
