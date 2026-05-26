@@ -6,6 +6,7 @@ using OpenTK.Windowing.Common;
 using OpenTK.Windowing.Desktop;
 using OpenTK.Windowing.GraphicsLibraryFramework;
 using Probuzhdenie.FreeCity;
+using Probuzhdenie.Player;
 
 namespace Probuzhdenie;
 
@@ -28,7 +29,6 @@ public class Game : GameWindow
     private const float DefaultCameraPitchDegrees = 18f;
     private const float ZoomSpeed = 18f;
     private const float WalkSpeed = 8f;
-    private const float SprintMultiplier = 2.5f;
     private const float AutoSaveIntervalSeconds = 30f;
     private const float NpcInteractionRange = 3f;
 
@@ -57,12 +57,8 @@ public class Game : GameWindow
     private DialogueChoice[] _dialogueChoices = Array.Empty<DialogueChoice>();
     private int _dialogueChoiceIndex;
     private double _profileElapsedSeconds;
+    private PlayerController? _playerController;
     private float _camDist = 14f, _camYaw, _camPitchDegrees = DefaultCameraPitchDegrees;
-    private Vector3 _playerTargetVel;
-    private float _playerCurrentSpeed;
-    private const float PlayerAccel = 20f;
-    private const float PlayerDecel = 30f;
-    private const float PlayerRotSpeed = 8f;
 
     public Game(RuntimeProfileOptions? profileOptions = null) : base(
         GameWindowSettings.Default,
@@ -131,6 +127,8 @@ public class Game : GameWindow
             _cam.SnapToTarget();
         }
 
+        _playerController = new PlayerController(_city, _input, _cam);
+
         if (_runtimeProfiler != null)
         {
             _screen = GameScreen.Playing;
@@ -182,80 +180,7 @@ public class Game : GameWindow
             if (_input.KeyDown(Keys.J)) _camDist -= ZoomSpeed * dt;
             _camDist = Math.Clamp(_camDist, 4f, 30f);
 
-            // WASD + геймпад: движение игрока
-            Vector3 fwd = new(_cam.Front.X, 0f, _cam.Front.Z);
-            if (fwd.LengthSquared < 0.001f)
-                fwd = Vector3.UnitZ;
-            else
-                fwd.Normalize();
-
-            Vector3 right = new(_cam.Right.X, 0f, _cam.Right.Z);
-            if (right.LengthSquared < 0.001f)
-                right = Vector3.UnitX;
-            else
-                right.Normalize();
-            Vector3 move = Vector3.Zero;
-            if (_input.KeyDown(Keys.W)) move += fwd;
-            if (_input.KeyDown(Keys.S)) move -= fwd;
-            if (_input.KeyDown(Keys.A)) move -= right;
-            if (_input.KeyDown(Keys.D)) move += right;
-            if (_input.GpConnected)
-                move += fwd * (-_input.GpLeftY) + right * _input.GpLeftX;
-
-            bool sprint = _input.KeyDown(Keys.LeftShift) || _input.GpSprintHeld;
-
-            if (move.LengthSquared > 0.1f)
-            {
-                if (move.LengthSquared > 1f) move.Normalize();
-                _playerTargetVel = move * WalkSpeed;
-
-                float targetSpeed = WalkSpeed;
-                if (sprint) targetSpeed *= SprintMultiplier;
-
-                _playerCurrentSpeed = _playerCurrentSpeed < targetSpeed
-                    ? Math.Min(targetSpeed, _playerCurrentSpeed + PlayerAccel * dt)
-                    : Math.Max(targetSpeed, _playerCurrentSpeed - PlayerDecel * dt);
-
-                Vector3 desiredPos = _city.Player.Position + _playerTargetVel.Normalized() * _playerCurrentSpeed * dt;
-                desiredPos = _city.ClampToWalkable(desiredPos, 0.3f);
-                desiredPos = _city.AdjustForNpcCollision(desiredPos, 0.3f, _city.Player);
-                Vector3 actualMove = desiredPos - _city.Player.Position;
-                _city.Player.Position = desiredPos;
-                _city.Player.Velocity = actualMove / Math.Max(dt, 0.0001f);
-
-                float targetRot = MathF.Atan2(_playerTargetVel.X, _playerTargetVel.Z);
-                float rotDiff = targetRot - _city.Player.Rotation;
-                if (rotDiff > MathF.PI) rotDiff -= MathHelper.TwoPi;
-                else if (rotDiff < -MathF.PI) rotDiff += MathHelper.TwoPi;
-                _city.Player.Rotation += rotDiff * Math.Clamp(PlayerRotSpeed * dt, 0f, 1f);
-
-                _city.Player.State = NpcState.Walking;
-            }
-            else
-            {
-                _playerTargetVel = Vector3.Zero;
-                _playerCurrentSpeed = Math.Max(0f, _playerCurrentSpeed - PlayerDecel * dt);
-                if (_playerCurrentSpeed > 0.01f)
-                {
-                    Vector3 desiredPos = _city.Player.Position + _city.Player.Velocity.Normalized() * _playerCurrentSpeed * dt;
-                    desiredPos = _city.ClampToWalkable(desiredPos, 0.3f);
-                    desiredPos = _city.AdjustForNpcCollision(desiredPos, 0.3f, _city.Player);
-                    _city.Player.Position = desiredPos;
-                    _city.Player.Velocity = (_city.Player.Velocity.Normalized() * _playerCurrentSpeed);
-                }
-                else
-                {
-                    _playerCurrentSpeed = 0f;
-                    _city.Player.Velocity = Vector3.Zero;
-                    if (_city.Player.State == NpcState.Walking)
-                        _city.Player.State = NpcState.Relaxing;
-                }
-            }
-
-            // Update player animation state
-            _city.Player.AnimPhase += _playerCurrentSpeed * 3.5f * dt;
-            _city.Player.AnimBlend = Math.Clamp(_playerCurrentSpeed / WalkSpeed, 0f, 1f);
-
+            _playerController?.Update(dt);
             UpdateThirdPerson(dt);
         }
 
@@ -267,9 +192,7 @@ public class Game : GameWindow
             if (_city.IsInside)
             {
                 _city.Player.Position = _city.ExitInterior();
-                _city.Player.Velocity = Vector3.Zero;
-                _playerCurrentSpeed = 0f;
-                _playerTargetVel = Vector3.Zero;
+                _playerController?.ResetMotion();
                 SnapCameraBehindHero();
             }
             else
@@ -278,9 +201,7 @@ public class Game : GameWindow
                 if (enterPos.HasValue)
                 {
                     _city.Player.Position = enterPos.Value;
-                    _city.Player.Velocity = Vector3.Zero;
-                    _playerCurrentSpeed = 0f;
-                    _playerTargetVel = Vector3.Zero;
+                    _playerController?.ResetMotion();
                     SnapCameraBehindHero();
                 }
             }
@@ -874,7 +795,6 @@ void main(){vec3 l=normalize(light);float d=max(dot(normalize(fN),l),0);o=vec4(f
         else
             _city.Player.AnimBlend = 0f;
         _city.Player.State = NpcState.Walking;
-        _playerCurrentSpeed = velocity.Length;
 
         _camYaw = _city.Player.Rotation - MathF.PI + MathF.Sin(t * 0.23f) * 0.35f;
         _camPitchDegrees = Math.Clamp(DefaultCameraPitchDegrees + MathF.Sin(t * 0.17f) * 8f, MinCameraPitchDegrees, MaxCameraPitchDegrees);

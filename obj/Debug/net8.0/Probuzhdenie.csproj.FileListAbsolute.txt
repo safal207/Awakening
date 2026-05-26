@@ -29,3 +29,4 @@ C:\Maincraft\obj\Debug\net8.0\Probuzhdenie.pdb
 C:\Maincraft\obj\Debug\net8.0\Probuzhdenie.genruntimeconfig.cache
 C:\Maincraft\obj\Debug\net8.0\ref\Probuzhdenie.dll
 C:\Maincraft\bin\Debug\net8.0\Probuzhdenie.exe
+C:\Maincraft\obj\Debug\net8.0\Probuzhdenie.sourcelink.json
