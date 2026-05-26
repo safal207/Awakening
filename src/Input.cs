@@ -14,6 +14,7 @@ public class Input
     private Vector2 _last;
     public float Dx { get; private set; }
     public float Dy { get; private set; }
+    public float ScrollDeltaY { get; private set; }
     public bool Lmb { get; private set; }
     public bool Rmb { get; private set; }
     public bool LmbPressed { get; private set; }
@@ -46,6 +47,7 @@ public class Input
         if (_first) { _last = new Vector2(m.X, m.Y); _first = false; }
         Dx = m.X - _last.X; Dy = m.Y - _last.Y;
         _last = new Vector2(m.X, m.Y);
+        ScrollDeltaY = m.ScrollDelta.Y;
 
         bool left = m.IsButtonDown(MouseButton.Left);
         bool right = m.IsButtonDown(MouseButton.Right);
