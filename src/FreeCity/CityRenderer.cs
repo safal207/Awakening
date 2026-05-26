@@ -367,12 +367,7 @@ public class CityRenderer : IDisposable
         }
 
         _player = _npcs[0];
-        _player.Color = new Vector3(0.15f, 0.44f, 0.88f);
-        _player.HeadColor = new Vector3(0.9f, 0.7f, 0.5f);
-        _player.PantsColor = new Vector3(0.06f, 0.08f, 0.13f);
-        _player.HairColor = new Vector3(0.08f, 0.05f, 0.03f);
-        _player.Height = 1.78f;
-        _player.Name = "Герой";
+        HeroStyle.ApplyTo(_player);
     }
 
     private void PushCharactersApart()
