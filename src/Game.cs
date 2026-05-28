@@ -57,8 +57,9 @@ public class Game : GameWindow
     private int _dialogueChoiceIndex;
     private double _profileElapsedSeconds;
     private PlayerController? _playerController;
-    private float _dialogueCamTargetDist;
     private float _preDialogueCamDist = 14f;
+    private float _preDialogueCamYaw;
+    private float _preDialogueCamPitch = DefaultCameraPitchDegrees;
     private bool _dialogueCameraReturning;
     private InteractionDetector? _interactionDetector;
     private InteractionResult _currentInteraction;
@@ -356,20 +357,13 @@ public class Game : GameWindow
         _input.ResetMouse();
         _dialogueNpc.LastTalkDay = _city.Progress.Day;
 
-        // Dialogue camera: zoom in, yaw to opposite side of NPC
+        // Dialogue camera: save current orbit state, dialogue framing is pair-based
         if (_city?.Player != null)
         {
             _preDialogueCamDist = _camDist;
-            _dialogueCamTargetDist = 5f;
+            _preDialogueCamYaw = _camYaw;
+            _preDialogueCamPitch = _camPitchDegrees;
             _dialogueCameraReturning = false;
-
-            Vector3 toNpc = target.Position - _city.Player.Position;
-            if (toNpc.LengthSquared > 0.001f)
-            {
-                toNpc.Y = 0f;
-                _camYaw = MathF.Atan2(toNpc.X, toNpc.Z) + MathF.PI;
-            }
-            _camPitchDegrees = MathHelper.Clamp(_camPitchDegrees, 12f, 30f);
         }
     }
 
@@ -395,20 +389,56 @@ public class Game : GameWindow
         if (_city?.Player == null) return;
         Vector3 p = _city.Player.Position;
         float playerH = _city.Player.Height;
+        float lerpFactor = Math.Clamp(6f * dt, 0f, 1f);
 
-        // Dialogue camera: smooth zoom in, and smooth return after dialogue
+        // === DIALOGUE FRAMING CAMERA ===
         if (_dialogueNpc != null)
         {
-            float lerpFactor = Math.Clamp(6f * dt, 0f, 1f);
-            _camDist = MathHelper.Lerp(_camDist, _dialogueCamTargetDist, lerpFactor);
+            Vector3 npcPos = _dialogueNpc.Position;
+            float npcH = _dialogueNpc.Height;
+
+            // Direction from player to NPC (horizontal)
+            Vector3 pairDir = npcPos - p;
+            pairDir.Y = 0f;
+            float pairLen = pairDir.Length;
+            if (pairLen < 0.01f) pairDir = Vector3.UnitZ;
+            else pairDir /= pairLen;
+
+            // Midpoint between player and NPC
+            Vector3 midpoint = (p + npcPos) * 0.5f;
+
+            // Side vector for camera offset
+            Vector3 side = Vector3.Normalize(Vector3.Cross(Vector3.UnitY, pairDir));
+
+            // Camera position: behind the midpoint, offset to the side, elevated
+            float camHeight = Math.Max(playerH, npcH) * 0.85f;
+            Vector3 camTarget = midpoint - pairDir * (pairLen * 0.25f + 1.5f)
+                               + side * (pairLen * 0.15f + 0.8f)
+                               + new Vector3(0, camHeight, 0);
+
+            // Look at NPC chest/head area (biased toward NPC, not midpoint)
+            Vector3 lookTarget = npcPos + new Vector3(0, npcH * 0.65f, 0);
+
+            // Smooth lerp camera position and look target
+            _cam.TargetPos = Vector3.Lerp(_cam.TargetPos, camTarget, lerpFactor);
+            _cam.Front = Vector3.Normalize(lookTarget - _cam.TargetPos);
+            _cam.Right = Vector3.Normalize(Vector3.Cross(_cam.Front, Vector3.UnitY));
+            _cam.Up = Vector3.Normalize(Vector3.Cross(_cam.Right, _cam.Front));
+            _cam.UpdateFollow(dt);
+            return;
         }
-        else if (_dialogueCameraReturning)
+
+        // === NORMAL / RETURNING CAMERA ===
+        if (_dialogueCameraReturning)
         {
-            float lerpFactor = Math.Clamp(6f * dt, 0f, 1f);
             _camDist = MathHelper.Lerp(_camDist, _preDialogueCamDist, lerpFactor);
+            _camYaw = MathHelper.Lerp(_camYaw, _preDialogueCamYaw, lerpFactor);
+            _camPitchDegrees = MathHelper.Lerp(_camPitchDegrees, _preDialogueCamPitch, lerpFactor);
             if (MathF.Abs(_camDist - _preDialogueCamDist) < 0.05f)
             {
                 _camDist = _preDialogueCamDist;
+                _camYaw = _preDialogueCamYaw;
+                _camPitchDegrees = _preDialogueCamPitch;
                 _dialogueCameraReturning = false;
             }
         }
@@ -418,18 +448,7 @@ public class Game : GameWindow
             _camDist * MathF.Cos(pr) * MathF.Sin(yr),
             _camDist * MathF.Sin(pr) + playerH * 1.4f,
             _camDist * MathF.Cos(pr) * MathF.Cos(yr));
-
-        // During dialogue: look at midpoint between player and NPC
-        Vector3 lookTarget;
-        if (_dialogueNpc != null)
-        {
-            lookTarget = (p + _dialogueNpc.Position) * 0.5f + new Vector3(0, playerH * 0.5f, 0);
-        }
-        else
-        {
-            lookTarget = p + new Vector3(0, playerH * 0.7f, 0);
-        }
-        _cam.Front = Vector3.Normalize(lookTarget - _cam.TargetPos);
+        _cam.Front = Vector3.Normalize(p + new Vector3(0, playerH * 0.7f, 0) - _cam.TargetPos);
         _cam.Right = Vector3.Normalize(Vector3.Cross(_cam.Front, Vector3.UnitY));
         _cam.Up = Vector3.Normalize(Vector3.Cross(_cam.Right, _cam.Front));
         _cam.Yaw = MathHelper.RadiansToDegrees(_camYaw);
