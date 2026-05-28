@@ -60,6 +60,8 @@ public class Game : GameWindow
     private InteractionDetector? _interactionDetector;
     private InteractionResult _currentInteraction;
     private float _camDist = 14f, _camYaw, _camPitchDegrees = DefaultCameraPitchDegrees;
+    private SpriteRenderer? _spriteRenderer;
+    private Texture? _logoSplash;
 
     public Game(RuntimeProfileOptions? profileOptions = null) : base(
         GameWindowSettings.Default,
@@ -87,6 +89,8 @@ public class Game : GameWindow
         _lightL = GL.GetUniformLocation(_shader, "light");
         _fogColL = GL.GetUniformLocation(_shader, "fogCol");
         _cityRenderContext = new CityRenderContext(_shader, _modelL, _viewL, _projL, _colorL, _fogColL);
+
+        _spriteRenderer = new SpriteRenderer();
 
         int seed;
         HeroProgress progress;
@@ -140,6 +144,8 @@ public class Game : GameWindow
             SnapCameraBehindHero();
             Console.WriteLine($"Runtime profile started for {_profileOptions!.DurationSeconds:F0}s. Report: {_profileOptions.ReportPath}");
         }
+
+        _logoSplash = Texture.CreateLogo();
     }
 
     protected override void OnUpdateFrame(FrameEventArgs args)
@@ -438,9 +444,21 @@ public class Game : GameWindow
         _ui.Rect(0.56f, 0.14f, 0.34f, 0.68f, new Vector3(0.035f, 0.043f, 0.048f));
         _ui.Rect(0.58f, 0.16f, 0.30f, 0.64f, new Vector3(0.045f, 0.055f, 0.061f));
 
-        string title = "ПРОБУЖДЕНИЕ";
-        float titleSize = 0.0084f;
-        _ui.Text(title, 0.13f, 0.18f, titleSize, warm);
+        _ui.Render(_shader, _modelL, _viewL, _projL, _colorL, _ambL, _lightL, _fogColL);
+        _ui.Begin(ClientSize.X, ClientSize.Y);
+        if (_logoSplash != null && _spriteRenderer != null)
+        {
+            _logoSplash.Bind(0);
+            var id2 = Matrix4.Identity;
+            const float logouiW = 0.34f, logouiH = 0.085f;
+            float logouix = 0.5f - logouiW * 0.5f, logouiy = 0.1f;
+            float lndcX = (logouix + logouiW * 0.5f) * 2f - 1f;
+            float lndcY = 1f - (logouiy + logouiH * 0.5f) * 2f;
+            float lndcW = logouiW * 2f, lndcH = logouiH * 2f;
+            _spriteRenderer.Begin();
+            _spriteRenderer.Add(new Vector3(lndcX, lndcY, 0f), lndcW, lndcH, new Vector3(1f, 0.95f, 0.75f), 1f);
+            _spriteRenderer.Flush(ref id2, ref id2);
+        }
 
         string heading = _screen == GameScreen.PauseMenu ? "МЕНЮ ПАУЗЫ" : "НОВЫЙ ЦИКЛ";
         _ui.Text(heading, 0.13f, 0.285f, 0.0047f, dim);
@@ -783,6 +801,8 @@ void main(){vec3 l=normalize(light);float d=max(dot(normalize(fN),l),0);o=vec4(f
             _city?.SaveGame();
         _city?.Dispose();
         _ui.Dispose();
+        _spriteRenderer?.Dispose();
+        _logoSplash?.Dispose();
         if (_crossVbo != 0) GL.DeleteBuffer(_crossVbo);
         if (_crossVao != 0) GL.DeleteVertexArray(_crossVao);
         if (_shader != 0) GL.DeleteProgram(_shader);

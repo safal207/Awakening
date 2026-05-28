@@ -23,10 +23,12 @@ public class CityRenderer : IDisposable
     private int _sidewalkVao, _sidewalkVbo, _sidewalkCount;
     private int _buildingVao, _buildingVbo, _buildingCount;
     private int _windowVao, _windowVbo, _windowCount;
-    private int _treeVao, _treeVbo, _treeCount;
     private int _npcVao, _npcVbo, _npcCount;
     private int _highlightVao, _highlightVbo;
-    private int _roadGpuBytes, _sidewalkGpuBytes, _buildingGpuBytes, _windowGpuBytes, _treeGpuBytes, _highlightGpuBytes;
+    private int _roadGpuBytes, _sidewalkGpuBytes, _buildingGpuBytes, _windowGpuBytes, _highlightGpuBytes;
+    private SpriteRenderer? _spriteRenderer;
+    private Texture? _treeTexture;
+    private readonly List<(Vector3 pos, float scale)> _treePositions = new();
     private float[] _npcBuf = new float[131072];
     private int _npcBufLen;
     private int _npcGpuCapacityBytes;
@@ -329,7 +331,6 @@ public class CityRenderer : IDisposable
         _sidewalkGpuBytes +
         _buildingGpuBytes +
         _windowGpuBytes +
-        _treeGpuBytes +
         _npcGpuCapacityBytes +
         _highlightGpuBytes +
         _interiorGpuBytes;
@@ -587,7 +588,8 @@ public class CityRenderer : IDisposable
 
     private void BuildTrees()
     {
-        var v = new List<float>();
+        _treePositions.Clear();
+        _treeTexture = Texture.CreateTree();
         var rng = new Random(42);
 
         for (int dx = -CityGenerator.CityRadius; dx <= CityGenerator.CityRadius; dx++)
@@ -600,51 +602,11 @@ public class CityRenderer : IDisposable
                 {
                     float tx = rx + (float)rng.NextDouble() * 2f - 1f;
                     float tz = rz + (float)rng.NextDouble() * 2f - 1f;
-                    float s = 0.6f; // полуширина кроны
-                    float trunkH = 0.8f;
-                    float crownH = 1.8f;
-                    float totalH = trunkH + crownH;
-
-                    // Два скрещенных quad-а (крест)
-                    // Сторона 1: вдоль X
-                    BillQuad(ref v, tx, 0, tz, tx + s, totalH, tz, 0.35f, 0.25f, 0.1f, 0.1f, 0.5f, 0.1f, trunkH / totalH);
-                    BillQuad(ref v, tx - s, 0, tz, tx, totalH, tz, 0.35f, 0.25f, 0.1f, 0.1f, 0.5f, 0.1f, trunkH / totalH);
-                    // Сторона 2: вдоль Z
-                    BillQuad(ref v, tx, 0, tz, tx, totalH, tz + s, 0.35f, 0.25f, 0.1f, 0.1f, 0.5f, 0.1f, trunkH / totalH);
-                    BillQuad(ref v, tx, 0, tz - s, tx, totalH, tz, 0.35f, 0.25f, 0.1f, 0.1f, 0.5f, 0.1f, trunkH / totalH);
+                    float scale = 0.9f + (float)rng.NextDouble() * 0.3f;
+                    _treePositions.Add((new Vector3(tx, 0f, tz), scale));
                 }
             }
         }
-
-        Upload(ref _treeVao, ref _treeVbo, ref _treeCount, ref _treeGpuBytes, v);
-    }
-
-    private static void BillQuad(ref List<float> v,
-        float x1, float y1, float z1, float x2, float y2, float z2,
-        float r1, float g1, float b1, float r2, float g2, float b2, float split)
-    {
-        // split — доля высоты, где ствол переходит в крону (0..1)
-        float dy = y2 - y1;
-        float midY = y1 + dy * split;
-        Vector3 dir = new(x2 - x1, 0, z2 - z1);
-        dir.Normalize();
-        float nx = -dir.Z, ny = 0, nz = dir.X; // нормаль перпендикулярна quad-у
-
-        // Нижняя половина (ствол) — два треугольника
-        AddVertex(v, x1, y1, z1, r1, g1, b1, nx, ny, nz);
-        AddVertex(v, x2, y1, z2, r1, g1, b1, nx, ny, nz);
-        AddVertex(v, x2, midY, z2, r1, g1, b1, nx, ny, nz);
-        AddVertex(v, x1, y1, z1, r1, g1, b1, nx, ny, nz);
-        AddVertex(v, x2, midY, z2, r1, g1, b1, nx, ny, nz);
-        AddVertex(v, x1, midY, z1, r1, g1, b1, nx, ny, nz);
-
-        // Верхняя половина (крона)
-        AddVertex(v, x1, midY, z1, r2, g2, b2, nx, ny, nz);
-        AddVertex(v, x2, midY, z2, r2, g2, b2, nx, ny, nz);
-        AddVertex(v, x2, y2, z2, r2, g2, b2, nx, ny, nz);
-        AddVertex(v, x1, midY, z1, r2, g2, b2, nx, ny, nz);
-        AddVertex(v, x2, y2, z2, r2, g2, b2, nx, ny, nz);
-        AddVertex(v, x1, y2, z1, r2, g2, b2, nx, ny, nz);
     }
 
     public void UpdateNpcs(float dt)
@@ -966,7 +928,6 @@ public class CityRenderer : IDisposable
             float headY = shoulderY + neckH + h * 0.095f;
 
             float shoulderR = h * 0.205f;
-            float chestR = h * 0.17f;
             float waistR = h * 0.14f;
             float hipR = h * 0.18f;
             float headR = h * 0.11f;
@@ -987,62 +948,123 @@ public class CityRenderer : IDisposable
             // Apply body bob to all Y
             float bob = bodyBob;
 
-            // === FEET ===
-            EmitBox(px - hipR * 0.6f - footW * 0.5f, ankleY + bob, pz - footD * 0.5f,
-                    px - hipR * 0.6f + footW * 0.5f, ankleY + bob, pz - footD * 0.5f,
-                    px - hipR * 0.6f + footW * 0.5f, ankleY + footH + bob, pz - footD * 0.5f,
-                    px - hipR * 0.6f - footW * 0.5f, ankleY + footH + bob, pz - footD * 0.5f,
-                    pants.X * 0.6f, pants.Y * 0.6f, pants.Z * 0.6f, 1.0f, 0, 0, 1);
-            EmitBox(px + hipR * 0.6f - footW * 0.5f, ankleY + bob, pz - footD * 0.5f,
-                    px + hipR * 0.6f + footW * 0.5f, ankleY + bob, pz - footD * 0.5f,
-                    px + hipR * 0.6f + footW * 0.5f, ankleY + footH + bob, pz - footD * 0.5f,
-                    px + hipR * 0.6f - footW * 0.5f, ankleY + footH + bob, pz - footD * 0.5f,
-                    pants.X * 0.6f, pants.Y * 0.6f, pants.Z * 0.6f, 1.0f, 0, 0, 1);
-            AddEllipsoid(px - hipR * 0.6f, ankleY + footH * 0.5f + bob, pz + footD * 0.08f, footW * 0.62f, footH * 0.78f, footD * 0.64f, pants.X * 0.52f, pants.Y * 0.52f, pants.Z * 0.52f, 10, 4);
-            AddEllipsoid(px + hipR * 0.6f, ankleY + footH * 0.5f + bob, pz + footD * 0.08f, footW * 0.62f, footH * 0.78f, footD * 0.64f, pants.X * 0.52f, pants.Y * 0.52f, pants.Z * 0.52f, 10, 4);
+            // === LEGS === two-segment (thigh + shin) with knee joint
+            float leftPhase = MathF.Sin(phase);
+            float rightPhase = MathF.Sin(phase + MathF.PI);
 
-            // === LEGS === single continuous tubes from ankle to hip
-            float legLen = shinH + thighH;
-            AddTube(px - hipR * 0.6f, ankleY + bob, pz, legRTop, legRBot, legLen,
-                pants.X, pants.Y, pants.Z, segs, legOffX, legOffZ);
-            AddTube(px + hipR * 0.6f, ankleY + bob, pz, legRTop, legRBot, legLen,
-                pants.X, pants.Y, pants.Z, segs, -legOffX, -legOffZ);
+            // Hip sway (subtle rotation)
+            float hipSway = leftPhase * 0.03f * blend;
+            float hipOffX = fwdX * hipSway;
+            float hipOffZ = fwdZ * hipSway;
 
-            // === TORSO === 3 smooth segments for color zones
-            float hipToWaist = torsoH * 0.4f;
+            // Per-leg helpers
+            void BuildLeg(float side, float legPhaseVal)
+            {
+                float cx = px + side * hipR * 0.6f;
+
+                // Foot swing forward/back
+                float footSw = legPhaseVal * 0.12f * blend;
+                float footOffX = fwdX * footSw;
+                float footOffZ = fwdZ * footSw;
+
+                // Foot lift (rises during swing)
+                float footLift = MathF.Max(0f, -legPhaseVal) * 0.10f * blend;
+
+                // Knee bend (moves back when foot lifts)
+                float kneeBend = MathF.Max(0f, -legPhaseVal) * 0.07f * blend;
+                float kneeOffX = -fwdX * kneeBend;
+                float kneeOffZ = -fwdZ * kneeBend;
+
+                // Opposite hip sway
+                float oppHipSway = legPhaseVal * 0.03f * blend;
+                float oppHipOffX = fwdX * oppHipSway;
+                float oppHipOffZ = fwdZ * oppHipSway;
+
+                // Shin (ankle → knee)
+                float shH = Math.Max(0.01f, shinH - footLift);
+                float kneeR = legRBot * 1.35f;
+                AddTube(cx, ankleY + bob + footLift, pz, kneeR, legRBot, shH,
+                    pants.X, pants.Y, pants.Z, segs,
+                    kneeOffX, kneeOffZ,   // top (knee) offset
+                    footOffX, footOffZ);  // bottom (foot) offset
+
+                // Thigh (knee → hip)
+                AddTube(cx, kneeY + bob, pz, legRTop, kneeR, thighH,
+                    pants.X * 0.92f, pants.Y * 0.92f, pants.Z * 0.92f, segs,
+                    oppHipOffX, oppHipOffZ,  // top (hip) offset
+                    kneeOffX, kneeOffZ);     // bottom (knee) offset
+
+                // Feet follow foot offset + lift
+                float fy = ankleY + bob + footLift;
+                EmitBox(cx - footW * 0.5f + footOffX, fy, pz - footD * 0.5f + footOffZ,
+                        cx + footW * 0.5f + footOffX, fy, pz - footD * 0.5f + footOffZ,
+                        cx + footW * 0.5f + footOffX, fy + footH, pz - footD * 0.5f + footOffZ,
+                        cx - footW * 0.5f + footOffX, fy + footH, pz - footD * 0.5f + footOffZ,
+                        pants.X * 0.6f, pants.Y * 0.6f, pants.Z * 0.6f, 1.0f, 0, 0, 1);
+                AddEllipsoid(cx + footOffX, fy + footH * 0.5f, pz + footD * 0.08f + footOffZ,
+                    footW * 0.62f, footH * 0.78f, footD * 0.64f,
+                    pants.X * 0.52f, pants.Y * 0.52f, pants.Z * 0.52f, 10, 4);
+            }
+
+            BuildLeg(-1f, leftPhase);
+            BuildLeg(1f, rightPhase);
+
+            // === TORSO === 4 segments for natural S-curve (lordosis)
+            float hipToWaist = torsoH * 0.30f;
             float waistToChest = torsoH * 0.35f;
-            float chestToShoulders = torsoH * 0.25f;
+            float chestToShoulders = torsoH * 0.35f;
 
-            AddTube(px, hipY + bob, pz, waistR, hipR, hipToWaist,
-                pants.X * 0.85f, pants.Y * 0.85f, pants.Z * 0.85f, segs);
-            AddTube(px, hipY + hipToWaist + bob, pz, chestR * 1.05f, waistR, waistToChest,
-                c.X * 0.85f, c.Y * 0.8f, c.Z * 0.8f, segs);
-            AddTube(px, hipY + hipToWaist + waistToChest + bob, pz, shoulderR, chestR * 1.05f, chestToShoulders,
-                c.X * 0.95f, c.Y * 0.88f, c.Z * 0.85f, segs);
+            // Natural spine curve: chest forward (+Z), waist neutral, hips back (-Z)
+            float spineCurve = h * 0.03f;
+            float chestZOff = pz + spineCurve * 0.8f;
+            float hipZOff = pz - spineCurve * 0.3f;
+            float waistZOff = pz;
 
-            // === SHOULDERS ===
-            float shoulderS = shoulderR * 0.38f;
+            AddTube(px, hipY + bob, hipZOff, waistR * 1.1f, hipR, hipToWaist,
+                pants.X * 0.85f, pants.Y * 0.85f, pants.Z * 0.85f, segs,
+                0, 0, 0, 0);
+
+            float waistMidY = hipY + hipToWaist + bob;
+            AddTube(px, waistMidY, waistZOff, waistR, waistR * 1.1f, waistToChest,
+                c.X * 0.85f, c.Y * 0.8f, c.Z * 0.8f, segs,
+                0, 0, 0, 0);
+
+            float chestMidY = waistMidY + waistToChest;
+            float chestW = shoulderR * 0.85f;
+            float waistW = waistR;
+            AddTube(px, chestMidY, chestZOff, chestW, waistW, chestToShoulders,
+                c.X * 0.95f, c.Y * 0.88f, c.Z * 0.85f, segs,
+                0, 0, 0, 0);
+
+            // === SHOULDERS === (deltoid)
+            float shoulderS = shoulderR * 0.42f;
             float shoulderZ = shoulderY + bob;
-            AddSphere(px - shoulderR, shoulderZ, pz, shoulderS, c.X * 0.9f, c.Y * 0.82f, c.Z * 0.78f, 8, 4);
-            AddSphere(px + shoulderR, shoulderZ, pz, shoulderS, c.X * 0.9f, c.Y * 0.82f, c.Z * 0.78f, 8, 4);
+            float shrX = shoulderR * 0.9f;
+            float shrCol = c.X * 0.9f, shgCol = c.Y * 0.82f, shbCol = c.Z * 0.78f;
+            AddEllipsoid(px - shoulderR, shoulderZ, pz + spineCurve * 0.4f, shoulderS, shoulderS * 0.7f, shoulderS * 0.6f,
+                shrCol, shgCol, shbCol, 8, 4);
+            AddEllipsoid(px + shoulderR, shoulderZ, pz + spineCurve * 0.4f, shoulderS, shoulderS * 0.7f, shoulderS * 0.6f,
+                shrCol, shgCol, shbCol, 8, 4);
 
-            // === NECK ===
-            AddTube(px, shoulderY + bob, pz, neckR, neckR, neckH,
+            // === NECK === (trapezius taper: wider at base)
+            AddTube(px, shoulderY + bob, pz + spineCurve * 0.5f, neckR, neckR * 1.5f, neckH,
                 hc.X * 0.85f, hc.Y * 0.8f, hc.Z * 0.78f, 8);
 
-            // === HEAD === ellipsoid
+            // === HEAD === ellipsoid (slightly tilted forward)
+            float headTilt = h * 0.01f;
+            float headCX = px, headCY = headY + bob, headCZ = pz + spineCurve * 0.6f - headTilt;
             float headRX = headR * 0.82f;
             float headRY = headR * 1.15f;
             float headRZ = headR * 0.95f;
-            AddEllipsoid(px, headY + bob, pz, headRX, headRY, headRZ, hc.X, hc.Y, hc.Z, 12, 8);
+            AddEllipsoid(headCX, headCY, headCZ, headRX, headRY, headRZ, hc.X, hc.Y, hc.Z, 12, 8);
 
             // === EYES ===
-            float eyeY = headY + headRY * 0.2f + bob;
-            float eyeZ = pz + headRZ * 0.75f;
+            float eyeY = headCY + headRY * 0.2f;
+            float eyeZ = headCZ + headRZ * 0.75f;
             float eyeR = headR * 0.18f;
             float eyeOff = headRX * 0.4f;
-            AddSphere(px - eyeOff, eyeY, eyeZ, eyeR, 0.03f, 0.03f, 0.06f, 8, 4);
-            AddSphere(px + eyeOff, eyeY, eyeZ, eyeR, 0.03f, 0.03f, 0.06f, 8, 4);
+            AddSphere(headCX - eyeOff, eyeY, eyeZ, eyeR, 0.03f, 0.03f, 0.07f, 8, 4);
+            AddSphere(headCX + eyeOff, eyeY, eyeZ, eyeR, 0.03f, 0.03f, 0.07f, 8, 4);
 
             // === EYEBROWS ===
             float browY = eyeY + headRY * 0.22f;
@@ -1050,54 +1072,81 @@ public class CityRenderer : IDisposable
             float browH = headRY * 0.03f;
             float browD = headRZ * 0.04f;
             float browCol = hc.X * 0.15f;
-            EmitBox(px - eyeOff - browW * 0.5f, browY, eyeZ - browD,
-                    px - eyeOff + browW * 0.5f, browY, eyeZ - browD,
-                    px - eyeOff + browW * 0.5f, browY + browH, eyeZ - browD,
-                    px - eyeOff - browW * 0.5f, browY + browH, eyeZ - browD,
+            EmitBox(headCX - eyeOff - browW * 0.5f, browY, eyeZ - browD,
+                    headCX - eyeOff + browW * 0.5f, browY, eyeZ - browD,
+                    headCX - eyeOff + browW * 0.5f, browY + browH, eyeZ - browD,
+                    headCX - eyeOff - browW * 0.5f, browY + browH, eyeZ - browD,
                     browCol, browCol * 0.7f, browCol * 0.3f, 1.0f, 0, 0, 1);
-            EmitBox(px + eyeOff - browW * 0.5f, browY, eyeZ - browD,
-                    px + eyeOff + browW * 0.5f, browY, eyeZ - browD,
-                    px + eyeOff + browW * 0.5f, browY + browH, eyeZ - browD,
-                    px + eyeOff - browW * 0.5f, browY + browH, eyeZ - browD,
+            EmitBox(headCX + eyeOff - browW * 0.5f, browY, eyeZ - browD,
+                    headCX + eyeOff + browW * 0.5f, browY, eyeZ - browD,
+                    headCX + eyeOff + browW * 0.5f, browY + browH, eyeZ - browD,
+                    headCX + eyeOff - browW * 0.5f, browY + browH, eyeZ - browD,
                     browCol, browCol * 0.7f, browCol * 0.3f, 1.0f, 0, 0, 1);
 
             // === MOUTH ===
-            float mouthY = headY - headRY * 0.07f + bob;
+            float mouthY = headCY - headRY * 0.07f;
             float mouthW = headRX * 0.2f;
             float mouthH = headRY * 0.025f;
             float mouthCol = hc.X * 0.5f;
-            EmitBox(px - mouthW, mouthY, eyeZ - headRZ * 0.05f,
-                    px + mouthW, mouthY, eyeZ - headRZ * 0.05f,
-                    px + mouthW, mouthY + mouthH, eyeZ - headRZ * 0.05f,
-                    px - mouthW, mouthY + mouthH, eyeZ - headRZ * 0.05f,
+            EmitBox(headCX - mouthW, mouthY, eyeZ - headRZ * 0.05f,
+                    headCX + mouthW, mouthY, eyeZ - headRZ * 0.05f,
+                    headCX + mouthW, mouthY + mouthH, eyeZ - headRZ * 0.05f,
+                    headCX - mouthW, mouthY + mouthH, eyeZ - headRZ * 0.05f,
                     mouthCol, mouthCol * 0.4f, mouthCol * 0.4f, 1.0f, 0, 0, 1);
 
             // === HAIR ===
-            float hairY = headY + headRY * 0.5f + bob;
+            float hairY = headCY + headRY * 0.5f;
             float hr = npc.HairColor.X, hg = npc.HairColor.Y, hb = npc.HairColor.Z;
-            AddEllipsoid(px, hairY, pz, headRX * 1.05f, headRY * 0.25f, headRZ * 0.9f, hr, hg, hb, 12, 4);
+            AddEllipsoid(headCX, hairY, headCZ, headRX * 1.05f, headRY * 0.25f, headRZ * 0.9f, hr, hg, hb, 12, 4);
 
-            // === ARMS === single continuous tubes from shoulder to wrist
+            // === ARMS === two-segment (upper arm + forearm) with elbow joint
             float armSkin = 0.92f;
             float armCr = hc.X * armSkin, armCg = hc.Y * armSkin, armCb = hc.Z * armSkin;
-            float armLen = armH + foreH;
-            float armBaseY = shoulderY + bob - shoulderS * 0.12f;
-            float wristY = armBaseY - armLen;
 
-            float leftShoulderX = px - shoulderR - armRTop * 0.15f;
-            float rightShoulderX = px + shoulderR + armRTop * 0.15f;
+            void BuildArm(float side, float swingPhase)
+            {
+                float shoulderX = px + side * (shoulderR + armRTop * 0.15f);
+                float shoulderYPos = shoulderY + bob - shoulderS * 0.12f;
 
-            AddTube(leftShoulderX, wristY, pz, armRTop, armRBot, armLen,
-                armCr * 0.95f, armCg * 0.95f, armCb * 0.95f, 8,
-                0, 0, armOffX, armOffZ);
-            AddSphere(leftShoulderX + armOffX, wristY - handR * 0.2f, pz + armOffZ, handR,
-                armCr, armCg, armCb, 8, 4);
+                // Swing magnitude (arm swings in opposite phase to leg on same side)
+                float swing = swingPhase * 0.14f * blend;
+                float swingX = fwdX * swing;
+                float swingZ = fwdZ * swing;
 
-            AddTube(rightShoulderX, wristY, pz, armRTop, armRBot, armLen,
-                armCr * 0.95f, armCg * 0.95f, armCb * 0.95f, 8,
-                0, 0, -armOffX, -armOffZ);
-            AddSphere(rightShoulderX - armOffX, wristY - handR * 0.2f, pz - armOffZ, handR,
-                armCr, armCg, armCb, 8, 4);
+                // Elbow bend: arm bends at elbow during swing
+                float elbowBend = (1f - MathF.Abs(swingPhase) * 0.5f) * 0.12f * blend;
+                float elbowOffX = -fwdX * elbowBend * side;
+                float elbowOffZ = -fwdZ * elbowBend;
+
+                // Upper arm (shoulder → elbow)
+                float elbowY = shoulderYPos - armH;
+                float uaTopR = armRTop, uaBotR = armRTop * 0.85f;
+                AddTube(shoulderX, elbowY, pz, uaBotR, uaTopR, armH,
+                    armCr * 0.95f, armCg * 0.95f, armCb * 0.95f, 8,
+                    elbowOffX, elbowOffZ,  // top of forearm (elbow)
+                    swingX, swingZ);       // base of upper arm (shoulder)
+
+                // Forearm (elbow → wrist)
+                float wristYPos = elbowY - foreH;
+                float faTopR = armRTop * 0.85f, faBotR = armRBot;
+                float fwdElbow = swingPhase * 0.06f * blend;
+                float fwdElbowX = fwdX * fwdElbow;
+                float fwdElbowZ = fwdZ * fwdElbow;
+                AddTube(shoulderX, wristYPos, pz, faBotR, faTopR, foreH,
+                    armCr, armCg, armCb, 8,
+                    0, 0,           // top of forearm (wrist) — slight follow
+                    elbowOffX, elbowOffZ);
+
+                // Hand at wrist
+                float handX = shoulderX + fwdElbowX * 0.0f;
+                float handZ = pz;
+                AddEllipsoid(handX, wristYPos - handR * 0.3f, handZ,
+                    handR * 0.8f, handR * 1.1f, handR * 0.7f,
+                    armCr, armCg, armCb, 6, 3);
+            }
+
+            BuildArm(-1f, MathF.Sin(phase + MathF.PI));
+            BuildArm(1f, MathF.Sin(phase));
 
             // === HERO OUTFIT DETAILS ===
             if (npc == _player)
@@ -1126,19 +1175,20 @@ public class CityRenderer : IDisposable
                 int btnCount = 3;
                 float btnStartY = shoulderY - torsoH * 0.1f + bob;
                 float btnEndY = hipY + hipToWaist + beltH + bob;
+                float btnZ = chestW * 1.02f;
                 for (int i = 0; i < btnCount; i++)
                 {
                     float t = (i + 1f) / (btnCount + 1);
                     float btnY = btnStartY + (btnEndY - btnStartY) * t;
-                    AddSphere(px, btnY, pz + chestR * 1.02f, btnR,
+                    AddSphere(px, btnY, pz + btnZ, btnR,
                         HeroStyle.ShirtLight.X * 0.7f, HeroStyle.ShirtLight.Y * 0.7f, HeroStyle.ShirtLight.Z * 0.7f, 6, 3);
                 }
 
                 // Cyan badge on left chest
                 float badgeS = h * 0.015f;
-                float badgeX = px - chestR * 0.3f;
+                float badgeX = px - chestW * 0.3f;
                 float badgeY = shoulderY - torsoH * 0.25f + bob;
-                float badgeZ = pz + chestR * 1.02f;
+                float badgeZ = pz + chestW * 1.02f;
                 EmitBox(badgeX - badgeS, badgeY, badgeZ,
                         badgeX + badgeS, badgeY, badgeZ,
                         badgeX + badgeS, badgeY + badgeS * 1.5f, badgeZ,
@@ -1219,8 +1269,26 @@ public class CityRenderer : IDisposable
         if (_windowCount > 0) { GL.BindVertexArray(_windowVao); GL.DrawArrays(PrimitiveType.Triangles, 0, _windowCount); }
         bool cullFaceEnabled = GL.IsEnabled(EnableCap.CullFace);
         GL.Disable(EnableCap.CullFace);
-        GL.BindVertexArray(_treeVao); GL.DrawArrays(PrimitiveType.Triangles, 0, _treeCount);
+        if (_spriteRenderer == null) _spriteRenderer = new SpriteRenderer();
+        if (_treeTexture != null)
+        {
+            _treeTexture.Bind(0);
+            _spriteRenderer.Begin();
+            float h = 2.6f, w = 1.4f;
+            foreach (var (pos, scale) in _treePositions)
+            {
+                float sh = h * scale, sw = w * scale;
+                Vector3 c = pos with { Y = pos.Y + sh * 0.5f };
+                _spriteRenderer.Add(c, sw, sh, Vector3.One, 1f);
+            }
+            _spriteRenderer.Flush(ref view, ref proj);
+        }
         if (cullFaceEnabled) GL.Enable(EnableCap.CullFace);
+        GL.UseProgram(context.Shader);
+        GL.UniformMatrix4(context.ViewLocation, false, ref view);
+        GL.UniformMatrix4(context.ProjectionLocation, false, ref proj);
+        GL.UniformMatrix4(context.ModelLocation, false, ref id);
+        GL.Uniform3(context.ColorLocation, -1f, -1f, -1f);
         GL.BindVertexArray(_npcVao); GL.DrawArrays(PrimitiveType.Triangles, 0, _npcCount);
     }
 
@@ -1326,7 +1394,8 @@ public class CityRenderer : IDisposable
         DeleteMesh(ref _sidewalkVao, ref _sidewalkVbo, ref _sidewalkCount, ref _sidewalkGpuBytes);
         DeleteMesh(ref _buildingVao, ref _buildingVbo, ref _buildingCount, ref _buildingGpuBytes);
         DeleteMesh(ref _windowVao, ref _windowVbo, ref _windowCount, ref _windowGpuBytes);
-        DeleteMesh(ref _treeVao, ref _treeVbo, ref _treeCount, ref _treeGpuBytes);
+        _spriteRenderer?.Dispose();
+        _treeTexture?.Dispose();
         DeleteMesh(ref _npcVao, ref _npcVbo, ref _npcCount);
         _npcGpuCapacityBytes = 0;
         DeleteMesh(ref _interiorVao, ref _interiorVbo, ref _interiorCount, ref _interiorGpuBytes);
