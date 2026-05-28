@@ -57,6 +57,7 @@ public class Game : GameWindow
     private int _dialogueChoiceIndex;
     private double _profileElapsedSeconds;
     private PlayerController? _playerController;
+    private float _dialogueCamTargetDist;
     private InteractionDetector? _interactionDetector;
     private InteractionResult _currentInteraction;
     private float _camDist = 14f, _camYaw, _camPitchDegrees = DefaultCameraPitchDegrees;
@@ -189,8 +190,10 @@ public class Game : GameWindow
             _camDist = Math.Clamp(_camDist, 4f, 30f);
 
             _playerController?.Update(dt);
-            UpdateThirdPerson(dt);
         }
+
+        // Camera always updates (including during dialogue for zoom)
+        UpdateThirdPerson(dt);
 
         if (_city?.Player != null && _dialogueNpc == null)
             _currentInteraction = _interactionDetector?.Detect(_city.Player.Position) ?? default;
@@ -349,6 +352,19 @@ public class Game : GameWindow
         CursorState = CursorState.Normal;
         _input.ResetMouse();
         _dialogueNpc.LastTalkDay = _city.Progress.Day;
+
+        // Dialogue camera: zoom in, yaw toward NPC
+        if (_city?.Player != null)
+        {
+            Vector3 toNpc = target.Position - _city.Player.Position;
+            if (toNpc.LengthSquared > 0.001f)
+            {
+                toNpc.Y = 0f;
+                _camYaw = MathF.Atan2(toNpc.X, toNpc.Z);
+            }
+            _camPitchDegrees = MathHelper.Clamp(_camPitchDegrees, 12f, 30f);
+            _dialogueCamTargetDist = 5f;
+        }
     }
 
     private void SnapCameraBehindHero()
@@ -365,8 +381,16 @@ public class Game : GameWindow
     {
         if (_city?.Player == null) return;
         Vector3 p = _city.Player.Position;
-        float yr = _camYaw, pr = MathHelper.DegreesToRadians(_camPitchDegrees);
         float playerH = _city.Player.Height;
+
+        // Dialogue camera: smooth zoom in toward NPC
+        if (_dialogueNpc != null)
+        {
+            float lerpFactor = Math.Clamp(6f * dt, 0f, 1f);
+            _camDist = MathHelper.Lerp(_camDist, _dialogueCamTargetDist, lerpFactor);
+        }
+
+        float yr = _camYaw, pr = MathHelper.DegreesToRadians(_camPitchDegrees);
         _cam.TargetPos = p + new Vector3(
             _camDist * MathF.Cos(pr) * MathF.Sin(yr),
             _camDist * MathF.Sin(pr) + playerH * 1.4f,
