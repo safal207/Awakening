@@ -1033,9 +1033,7 @@ public class CityRenderer : IDisposable
             float walkAmp = 0.14f * blend * (1f + sprintFactor * 0.3f);
             float swingAmt = legPhase * walkAmp;
 
-            // Torso rotation: subtle yaw during walk
-            float torsoYaw = cosPhase * 0.025f * blend * (1f + sprintFactor * 0.2f);
-            // Slight lateral lean
+            // Slight lateral lean during walk
             float torsoLean = cosPhase * 0.012f * blend;
 
             // Direction-aware offsets
