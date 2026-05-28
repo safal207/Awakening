@@ -58,10 +58,11 @@ public class Game : GameWindow
     private double _profileElapsedSeconds;
     private PlayerController? _playerController;
     private float _dialogueCamTargetDist;
+    private float _preDialogueCamDist = 14f;
+    private bool _dialogueCameraReturning;
     private InteractionDetector? _interactionDetector;
     private InteractionResult _currentInteraction;
     private float _camDist = 14f, _camYaw, _camPitchDegrees = DefaultCameraPitchDegrees;
-    private float _preDialogueCamDist = 14f;
     private SpriteRenderer? _spriteRenderer;
     private Texture? _logoSplash;
 
@@ -165,8 +166,8 @@ public class Game : GameWindow
         // Dialogue close by Escape (before global pause menu)
         if (_dialogueNpc != null && (_input.KeyPressed(Keys.Escape) || _input.GpBPressed))
         {
-            _dialogueNpc = null;
-            CaptureMouse();
+            EndDialogue();
+            return;
         }
 
         if (_input.KeyPressed(Keys.Escape) || _input.GpStartPressed)
@@ -255,8 +256,7 @@ public class Game : GameWindow
                 _dialogueNpc.ApplyChoice(choice, _city!.Progress);
                 _city.Awareness.Add(2f);
                 _city.RegisterTalk();
-                _dialogueNpc = null;
-                CaptureMouse();
+                EndDialogue();
                 _dialogueTimer = 2f;
             }
         }
@@ -361,6 +361,7 @@ public class Game : GameWindow
         {
             _preDialogueCamDist = _camDist;
             _dialogueCamTargetDist = 5f;
+            _dialogueCameraReturning = false;
 
             Vector3 toNpc = target.Position - _city.Player.Position;
             if (toNpc.LengthSquared > 0.001f)
@@ -370,6 +371,13 @@ public class Game : GameWindow
             }
             _camPitchDegrees = MathHelper.Clamp(_camPitchDegrees, 12f, 30f);
         }
+    }
+
+    private void EndDialogue()
+    {
+        _dialogueNpc = null;
+        _dialogueCameraReturning = true;
+        CaptureMouse();
     }
 
     private void SnapCameraBehindHero()
@@ -388,10 +396,22 @@ public class Game : GameWindow
         Vector3 p = _city.Player.Position;
         float playerH = _city.Player.Height;
 
-        // Always lerp camera distance (returns smoothly after dialogue)
-        float targetDist = _dialogueNpc != null ? _dialogueCamTargetDist : _preDialogueCamDist;
-        float lerpFactor = Math.Clamp(6f * dt, 0f, 1f);
-        _camDist = MathHelper.Lerp(_camDist, targetDist, lerpFactor);
+        // Dialogue camera: smooth zoom in, and smooth return after dialogue
+        if (_dialogueNpc != null)
+        {
+            float lerpFactor = Math.Clamp(6f * dt, 0f, 1f);
+            _camDist = MathHelper.Lerp(_camDist, _dialogueCamTargetDist, lerpFactor);
+        }
+        else if (_dialogueCameraReturning)
+        {
+            float lerpFactor = Math.Clamp(6f * dt, 0f, 1f);
+            _camDist = MathHelper.Lerp(_camDist, _preDialogueCamDist, lerpFactor);
+            if (MathF.Abs(_camDist - _preDialogueCamDist) < 0.05f)
+            {
+                _camDist = _preDialogueCamDist;
+                _dialogueCameraReturning = false;
+            }
+        }
 
         float yr = _camYaw, pr = MathHelper.DegreesToRadians(_camPitchDegrees);
         _cam.TargetPos = p + new Vector3(
