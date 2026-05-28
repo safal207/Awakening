@@ -261,7 +261,7 @@ public class Game : GameWindow
                 _city.RegisterTalk();
 
                 // Build feedback text from stat deltas
-                _dialogueFeedback = BuildChoiceFeedback(choice, _dialogueNpc);
+                _dialogueFeedback = BuildChoiceFeedback(choice);
                 _dialogueFeedbackTimer = 3f;
 
                 EndDialogue();
@@ -393,7 +393,7 @@ public class Game : GameWindow
         _cam.SnapToTarget();
     }
 
-    private static string BuildChoiceFeedback(DialogueChoice choice, NpcCharacter npc)
+    private static string BuildChoiceFeedback(DialogueChoice choice)
     {
         var parts = new List<string>();
 
