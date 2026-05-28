@@ -42,6 +42,10 @@ public static class SaveSystem
         public float TimeOfDay { get; set; }
         public DateTime LastSavedUtc { get; set; } = DateTime.UtcNow;
         public List<NpcSaveData>? Npcs { get; set; }
+        public int DailyObjectiveDay { get; set; } = 1;
+        public int DailyTalkProgress { get; set; }
+        public bool DailyObjectiveCompleted { get; set; }
+        public List<int>? DailyTalkedNpcs { get; set; }
     }
 
     public static void Save(int seed, HeroProgress progress, AwarenessSystem awareness, float timeOfDay, IReadOnlyList<NpcCharacter>? npcs = null)
@@ -134,6 +138,10 @@ public static class SaveSystem
                     Awareness = n.Awareness,
                     State = n.State.ToString(),
                 }).ToList(),
+                DailyObjectiveDay = progress.DailyObjectiveDay,
+                DailyTalkProgress = progress.DailyTalkProgress,
+                DailyObjectiveCompleted = progress.DailyObjectiveCompleted,
+                DailyTalkedNpcs = new List<int>(progress.DailyTalkedNpcs),
             };
 
             string json = JsonSerializer.Serialize(data, SaveOptions);
@@ -159,6 +167,7 @@ public static class SaveSystem
             var progress = new HeroProgress();
             progress.Restore(data.Day, data.Memory, data.Curiosity, data.Empathy, data.Agency, data.Courage);
             progress.LoadDiscoveredEggs(data.DiscoveredEggs);
+            progress.LoadDailyObjective(data.DailyObjectiveDay, data.DailyTalkProgress, data.DailyObjectiveCompleted, data.DailyTalkedNpcs);
 
             double minutesAway = Math.Max(0d, (DateTime.UtcNow - data.LastSavedUtc.ToUniversalTime()).TotalMinutes);
             double offlineMinutes = data.Awareness >= HeroProgress.OfflineGrowthAwarenessThreshold

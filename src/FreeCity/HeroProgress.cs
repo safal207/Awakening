@@ -17,6 +17,8 @@ public class HeroProgress
     public const float OfflineGrowthAwarenessThreshold = 70f;
     private const double MaxOfflineGrowthMinutes = 12 * 60;
 
+    public const int DailyTalkGoal = 2;
+
     public int Day { get; private set; } = 1;
     public float Memory { get; private set; } = 0f; // 0-100
     public float Curiosity { get; private set; } = 0f; // 0-100
@@ -26,6 +28,13 @@ public class HeroProgress
     public double LastOfflineGrowthMinutes { get; private set; }
     public HeroQuality? LastLeveledQuality { get; private set; }
     public int LastLeveledQualityLevel { get; private set; }
+
+    // Daily objective
+    public int DailyTalkProgress { get; private set; }
+    public int DailyObjectiveDay { get; private set; } = 1;
+    public bool DailyObjectiveCompleted { get; private set; }
+    private readonly HashSet<int> _dailyTalkedNpcs = new();
+    public IReadOnlyCollection<int> DailyTalkedNpcs => _dailyTalkedNpcs;
 
     // Track which Easter eggs have been discovered to prevent repeated gains
     private readonly HashSet<string> _discoveredEggs = new();
@@ -40,6 +49,12 @@ public class HeroProgress
         Empathy = Math.Max(0f, Empathy - 0.5f);
         Agency = Math.Max(0f, Agency - 0.5f);
         Courage = Math.Max(0f, Courage - 0.5f);
+
+        // Reset daily objective
+        DailyTalkProgress = 0;
+        DailyObjectiveDay = Day;
+        DailyObjectiveCompleted = false;
+        _dailyTalkedNpcs.Clear();
     }
 
     public bool DiscoverEgg(string eggId, float memoryGain = 5f, float curiosityGain = 5f, float empathyGain = 0f, float agencyGain = 0f, float courageGain = 0f)
@@ -83,6 +98,37 @@ public class HeroProgress
         Empathy = ClampQuality(empathy);
         Agency = ClampQuality(agency);
         Courage = ClampQuality(courage);
+    }
+
+    /// <summary>
+    /// Register a dialogue contact with an NPC for the daily objective.
+    /// Returns true if this is a new unique contact today.
+    /// </summary>
+    public bool RegisterDailyTalk(int npcId)
+    {
+        if (DailyObjectiveCompleted) return false;
+        if (DailyObjectiveDay != Day) return false;
+        if (!_dailyTalkedNpcs.Add(npcId)) return false;
+
+        DailyTalkProgress++;
+        if (DailyTalkProgress >= DailyTalkGoal)
+        {
+            DailyObjectiveCompleted = true;
+            AddQualities(memory: 2f, curiosity: 1f, agency: 1f);
+            return true;
+        }
+        return true;
+    }
+
+    public void LoadDailyObjective(int objectiveDay, int talkProgress, bool completed, IEnumerable<int>? talkedNpcs = null)
+    {
+        DailyObjectiveDay = objectiveDay;
+        DailyTalkProgress = talkProgress;
+        DailyObjectiveCompleted = completed;
+        _dailyTalkedNpcs.Clear();
+        if (talkedNpcs != null)
+            foreach (var id in talkedNpcs)
+                _dailyTalkedNpcs.Add(id);
     }
 
     public double ApplyOfflineGrowth(double minutesAway)
