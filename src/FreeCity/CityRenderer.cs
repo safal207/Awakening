@@ -941,8 +941,8 @@ public class CityRenderer : IDisposable
                     HeroStyle.Accent.X, HeroStyle.Accent.Y, HeroStyle.Accent.Z, 1.0f, 0, 0, 1);
 
             // Diagonal strap (left shoulder → right hip) — local-space
-            float strapW = h * 0.008f;
-            float strapThick = h * 0.006f;
+            float strapW = h * 0.006f;
+            float strapThick = h * 0.0045f;
             float strapStartY = shoulderY + bob;
             float strapEndY = hipY + hipToWaist + bob;
             Vector3 strapStart = center - rgt * (shoulderR * 0.6f) + fwd * (chestR * 0.25f);
