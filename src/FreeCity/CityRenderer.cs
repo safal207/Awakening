@@ -884,6 +884,107 @@ public class CityRenderer : IDisposable
             }
         }
 
+        void AddHeroOutfitDetails(NpcCharacter npc, Vector3 center, Vector3 fwd, Vector3 rgt,
+            float h, float chestR, float waistR, float shoulderY, float hipY, float torsoH, float neckR, float bob,
+            float shoulderR, float hipR)
+        {
+            if (npc != _player) return;
+
+            float px = center.X, py = center.Y, pz = center.Z;
+            float hipToWaist = torsoH * 0.30f;
+
+            // Collar at neck base
+            float collarY = shoulderY + bob;
+            float collarH = h * 0.02f;
+            AddTube(px, collarY, pz, neckR * 0.9f, neckR * 1.3f, collarH,
+                HeroStyle.ShirtLight.X * 0.8f, HeroStyle.ShirtLight.Y * 0.8f, HeroStyle.ShirtLight.Z * 0.8f, 8);
+
+            // Belt at waist
+            float beltY = hipY + hipToWaist + bob;
+            float beltH = h * 0.015f;
+            AddTube(px, beltY, pz, waistR * 1.05f, waistR * 1.05f, beltH,
+                HeroStyle.Belt.X, HeroStyle.Belt.Y, HeroStyle.Belt.Z, 12);
+
+            // Belt buckle — local-space forward
+            float buckleW = h * 0.018f;
+            Vector3 bc = center + fwd * (waistR * 1.02f);
+            bc.Y = beltY;
+            EmitBox(bc.X - rgt.X * buckleW, bc.Y, bc.Z - rgt.Z * buckleW,
+                    bc.X + rgt.X * buckleW, bc.Y, bc.Z + rgt.Z * buckleW,
+                    bc.X + rgt.X * buckleW, bc.Y + beltH, bc.Z + rgt.Z * buckleW,
+                    bc.X - rgt.X * buckleW, bc.Y + beltH, bc.Z - rgt.Z * buckleW,
+                    HeroStyle.Accent.X, HeroStyle.Accent.Y, HeroStyle.Accent.Z, 1.0f, 0, 0, 1);
+
+            // Shirt buttons — local-space forward
+            float btnR = h * 0.006f;
+            int btnCount = 3;
+            float btnStartY = shoulderY - torsoH * 0.1f + bob;
+            float btnEndY = hipY + hipToWaist + beltH + bob;
+            for (int i = 0; i < btnCount; i++)
+            {
+                float t = (i + 1f) / (btnCount + 1);
+                float btnY = btnStartY + (btnEndY - btnStartY) * t;
+                Vector3 btnPos = center + fwd * (chestR * 1.02f);
+                btnPos.Y = btnY;
+                AddSphere(btnPos.X, btnPos.Y, btnPos.Z, btnR,
+                    HeroStyle.ShirtLight.X * 0.7f, HeroStyle.ShirtLight.Y * 0.7f, HeroStyle.ShirtLight.Z * 0.7f, 6, 3);
+            }
+
+            // Cyan badge on left chest — local-space
+            float badgeS = h * 0.012f;
+            Vector3 badgeCenter = center + fwd * (chestR * 1.04f) - rgt * (chestR * 0.28f);
+            badgeCenter.Y = shoulderY - torsoH * 0.25f + bob;
+            EmitBox(badgeCenter.X - rgt.X * badgeS, badgeCenter.Y, badgeCenter.Z - rgt.Z * badgeS,
+                    badgeCenter.X + rgt.X * badgeS, badgeCenter.Y, badgeCenter.Z + rgt.Z * badgeS,
+                    badgeCenter.X + rgt.X * badgeS, badgeCenter.Y + badgeS * 1.5f, badgeCenter.Z + rgt.Z * badgeS,
+                    badgeCenter.X - rgt.X * badgeS, badgeCenter.Y + badgeS * 1.5f, badgeCenter.Z - rgt.Z * badgeS,
+                    HeroStyle.Accent.X, HeroStyle.Accent.Y, HeroStyle.Accent.Z, 1.0f, 0, 0, 1);
+
+            // Diagonal strap (left shoulder → right hip) — local-space
+            float strapW = h * 0.006f;
+            float strapThick = h * 0.0045f;
+            float strapStartY = shoulderY + bob;
+            float strapEndY = hipY + hipToWaist + bob;
+            Vector3 strapStart = center - rgt * (shoulderR * 0.6f) + fwd * (chestR * 0.25f);
+            Vector3 strapEnd = center + rgt * (hipR * 0.45f) + fwd * (chestR * 0.1f);
+            strapStart.Y = strapStartY;
+            strapEnd.Y = strapEndY;
+            Vector3 strapDir = strapEnd - strapStart;
+            float strapLen = strapDir.Length;
+            if (strapLen > 0.01f)
+            {
+                strapDir /= strapLen;
+                Vector3 perp = Vector3.Cross(strapDir, fwd);
+                perp.Normalize();
+                Vector3 perp2 = Vector3.Cross(strapDir, perp);
+                perp2.Normalize();
+
+                void Svert(Vector3 a, Vector3 b, Vector3 c, Vector3 d)
+                {
+                    Emit(a.X, a.Y, a.Z, HeroStyle.Strap.X, HeroStyle.Strap.Y, HeroStyle.Strap.Z, perp.X, perp.Y, perp.Z);
+                    Emit(b.X, b.Y, b.Z, HeroStyle.Strap.X, HeroStyle.Strap.Y, HeroStyle.Strap.Z, perp.X, perp.Y, perp.Z);
+                    Emit(c.X, c.Y, c.Z, HeroStyle.Strap.X, HeroStyle.Strap.Y, HeroStyle.Strap.Z, perp.X, perp.Y, perp.Z);
+                    Emit(a.X, a.Y, a.Z, HeroStyle.Strap.X, HeroStyle.Strap.Y, HeroStyle.Strap.Z, perp.X, perp.Y, perp.Z);
+                    Emit(c.X, c.Y, c.Z, HeroStyle.Strap.X, HeroStyle.Strap.Y, HeroStyle.Strap.Z, perp.X, perp.Y, perp.Z);
+                    Emit(d.X, d.Y, d.Z, HeroStyle.Strap.X, HeroStyle.Strap.Y, HeroStyle.Strap.Z, perp.X, perp.Y, perp.Z);
+                }
+
+                Vector3 hw = perp * (strapW * 0.5f);
+                Vector3 ht = perp2 * (strapThick * 0.5f);
+                for (int seg = 0; seg < 4; seg++)
+                {
+                    float t0 = seg / 4f;
+                    float t1 = (seg + 1f) / 4f;
+                    Vector3 p0 = strapStart + strapDir * (strapLen * t0);
+                    Vector3 p1 = strapStart + strapDir * (strapLen * t1);
+                    Svert(p0 - hw - ht, p0 + hw - ht, p1 + hw - ht, p1 - hw - ht);
+                    Svert(p0 - hw + ht, p0 + hw + ht, p1 + hw + ht, p1 - hw + ht);
+                    Svert(p0 - hw - ht, p0 - hw + ht, p1 - hw + ht, p1 - hw - ht);
+                    Svert(p0 + hw - ht, p0 + hw + ht, p1 + hw + ht, p1 + hw - ht);
+                }
+            }
+        }
+
         foreach (var npc in _npcs)
         {
             float px = npc.Position.X, py = npc.Position.Y, pz = npc.Position.Z;
@@ -910,6 +1011,8 @@ public class CityRenderer : IDisposable
             // Direction-aware offsets
             float fwdX = MathF.Sin(npc.Rotation);
             float fwdZ = MathF.Cos(npc.Rotation);
+            float rightX = MathF.Cos(npc.Rotation);
+            float rightZ = -MathF.Sin(npc.Rotation);
 
             float legOffX = fwdX * swingAmt;
             float legOffZ = fwdZ * swingAmt;
@@ -1061,10 +1164,11 @@ public class CityRenderer : IDisposable
             // === EYES ===
             float eyeY = headCY + headRY * 0.2f;
             float eyeZ = headCZ + headRZ * 0.75f;
-            float eyeR = headR * 0.18f;
+            float eyeR = HeroStyle.IsHero(npc) ? headR * 0.22f : headR * 0.18f;
             float eyeOff = headRX * 0.4f;
-            AddSphere(headCX - eyeOff, eyeY, eyeZ, eyeR, 0.03f, 0.03f, 0.07f, 8, 4);
-            AddSphere(headCX + eyeOff, eyeY, eyeZ, eyeR, 0.03f, 0.03f, 0.07f, 8, 4);
+            Vector3 eyeCol = HeroStyle.IsHero(npc) ? HeroStyle.Eye : new Vector3(0.03f, 0.03f, 0.07f);
+            AddSphere(headCX - eyeOff, eyeY, eyeZ, eyeR, eyeCol.X, eyeCol.Y, eyeCol.Z, 8, 4);
+            AddSphere(headCX + eyeOff, eyeY, eyeZ, eyeR, eyeCol.X, eyeCol.Y, eyeCol.Z, 8, 4);
 
             // === EYEBROWS ===
             float browY = eyeY + headRY * 0.22f;
@@ -1096,8 +1200,9 @@ public class CityRenderer : IDisposable
 
             // === HAIR ===
             float hairY = headCY + headRY * 0.5f;
-            float hr = npc.HairColor.X, hg = npc.HairColor.Y, hb = npc.HairColor.Z;
-            AddEllipsoid(headCX, hairY, headCZ, headRX * 1.05f, headRY * 0.25f, headRZ * 0.9f, hr, hg, hb, 12, 4);
+            var hairCol = HeroStyle.IsHero(npc) ? HeroStyle.HairLight : npc.HairColor;
+            AddEllipsoid(headCX, hairY, headCZ, headRX * 1.05f, headRY * 0.25f, headRZ * 0.9f,
+                hairCol.X, hairCol.Y, hairCol.Z, 12, 4);
 
             // === ARMS === two-segment (upper arm + forearm) with elbow joint
             float armSkin = 0.92f;
@@ -1148,53 +1253,9 @@ public class CityRenderer : IDisposable
             BuildArm(-1f, MathF.Sin(phase + MathF.PI));
             BuildArm(1f, MathF.Sin(phase));
 
-            // === HERO OUTFIT DETAILS ===
-            if (npc == _player)
-            {
-                // Collar at neck base
-                float collarY = shoulderY + bob;
-                float collarH = h * 0.03f;
-                AddTube(px, collarY, pz, neckR * 0.9f, neckR * 1.3f, collarH,
-                    HeroStyle.ShirtLight.X * 0.8f, HeroStyle.ShirtLight.Y * 0.8f, HeroStyle.ShirtLight.Z * 0.8f, 8);
-
-                // Belt at waist
-                float beltY = hipY + hipToWaist + bob;
-                float beltH = h * 0.02f;
-                AddTube(px, beltY, pz, waistR * 1.05f, waistR * 1.05f, beltH,
-                    HeroStyle.Belt.X, HeroStyle.Belt.Y, HeroStyle.Belt.Z, 12);
-
-                // Belt buckle
-                float buckleW = h * 0.025f;
-                float buckleZ = pz + waistR * 1.02f;
-                EmitBox(px - buckleW, beltY, buckleZ, px + buckleW, beltY, buckleZ,
-                        px + buckleW, beltY + beltH, buckleZ, px - buckleW, beltY + beltH, buckleZ,
-                        HeroStyle.Accent.X, HeroStyle.Accent.Y, HeroStyle.Accent.Z, 1.0f, 0, 0, 1);
-
-                // Shirt buttons
-                float btnR = h * 0.008f;
-                int btnCount = 3;
-                float btnStartY = shoulderY - torsoH * 0.1f + bob;
-                float btnEndY = hipY + hipToWaist + beltH + bob;
-                float btnZ = chestW * 1.02f;
-                for (int i = 0; i < btnCount; i++)
-                {
-                    float t = (i + 1f) / (btnCount + 1);
-                    float btnY = btnStartY + (btnEndY - btnStartY) * t;
-                    AddSphere(px, btnY, pz + btnZ, btnR,
-                        HeroStyle.ShirtLight.X * 0.7f, HeroStyle.ShirtLight.Y * 0.7f, HeroStyle.ShirtLight.Z * 0.7f, 6, 3);
-                }
-
-                // Cyan badge on left chest
-                float badgeS = h * 0.015f;
-                float badgeX = px - chestW * 0.3f;
-                float badgeY = shoulderY - torsoH * 0.25f + bob;
-                float badgeZ = pz + chestW * 1.02f;
-                EmitBox(badgeX - badgeS, badgeY, badgeZ,
-                        badgeX + badgeS, badgeY, badgeZ,
-                        badgeX + badgeS, badgeY + badgeS * 1.5f, badgeZ,
-                        badgeX - badgeS, badgeY + badgeS * 1.5f, badgeZ,
-                        HeroStyle.Accent.X, HeroStyle.Accent.Y, HeroStyle.Accent.Z, 1.0f, 0, 0, 1);
-            }
+            AddHeroOutfitDetails(npc, new Vector3(px, py, pz),
+                new Vector3(fwdX, 0, fwdZ), new Vector3(rightX, 0, rightZ),
+                h, chestW, waistR, shoulderY, hipY, torsoH, neckR, bob, shoulderR, hipR);
 
             if (npc == _player && npc.State == NpcState.Aware)
             {

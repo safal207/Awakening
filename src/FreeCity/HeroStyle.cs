@@ -11,10 +11,14 @@ public static class HeroStyle
     public static readonly Vector3 Skin = new(0.92f, 0.70f, 0.50f);
     public static readonly Vector3 Pants = new(0.04f, 0.06f, 0.11f);
     public static readonly Vector3 Hair = new(0.07f, 0.045f, 0.025f);
+    public static readonly Vector3 HairLight = new(0.78f, 0.62f, 0.38f);
     public static readonly Vector3 ShirtLight = new(0.65f, 0.88f, 1.0f);
     public static readonly Vector3 ShirtDark = new(0.08f, 0.28f, 0.55f);
     public static readonly Vector3 Belt = new(0.08f, 0.055f, 0.035f);
     public static readonly Vector3 Accent = new(0.25f, 0.85f, 1.0f);
+    public static readonly Vector3 Strap = new(0.03f, 0.035f, 0.04f);
+    public static readonly Vector3 Shoe = new(0.025f, 0.025f, 0.03f);
+    public static readonly Vector3 Eye = new(0.03f, 0.05f, 0.09f);
 
     public static bool IsHero(NpcCharacter npc) => npc.Id == 0 || npc.Name == Name;
 
@@ -25,6 +29,6 @@ public static class HeroStyle
         hero.Color = ShirtBlue;
         hero.HeadColor = Skin;
         hero.PantsColor = Pants;
-        hero.HairColor = Hair;
+        hero.HairColor = HairLight;
     }
 }
