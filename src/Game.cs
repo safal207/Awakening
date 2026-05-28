@@ -55,6 +55,8 @@ public class Game : GameWindow
     private string _dialogueNpcLine = "";
     private DialogueChoice[] _dialogueChoices = Array.Empty<DialogueChoice>();
     private int _dialogueChoiceIndex;
+    private string _dialogueFeedback = "";
+    private float _dialogueFeedbackTimer;
     private double _profileElapsedSeconds;
     private PlayerController? _playerController;
     private float _preDialogueCamDist = 14f;
@@ -257,6 +259,11 @@ public class Game : GameWindow
                 _dialogueNpc.ApplyChoice(choice, _city!.Progress);
                 _city.Awareness.Add(2f);
                 _city.RegisterTalk();
+
+                // Build feedback text from stat deltas
+                _dialogueFeedback = BuildChoiceFeedback(choice);
+                _dialogueFeedbackTimer = 3f;
+
                 EndDialogue();
                 _dialogueTimer = 2f;
             }
@@ -264,6 +271,8 @@ public class Game : GameWindow
         else
         {
             _dialogueTimer -= dt;
+            if (_dialogueFeedbackTimer > 0f)
+                _dialogueFeedbackTimer -= dt;
 
             if (_city?.Player != null && (_input.LmbPressed || _input.GpAPressed) && _dialogueTimer <= 0)
             {
@@ -382,6 +391,31 @@ public class Game : GameWindow
         _camDist = 11f;
         UpdateThirdPerson(0);
         _cam.SnapToTarget();
+    }
+
+    private static string BuildChoiceFeedback(DialogueChoice choice)
+    {
+        var parts = new List<string>();
+
+        if (MathF.Abs(choice.FriendlinessDelta) > 0.01f)
+            parts.Add(choice.FriendlinessDelta > 0 ? $"Доверие +{choice.FriendlinessDelta:F0}" : $"Доверие {choice.FriendlinessDelta:F0}");
+        if (MathF.Abs(choice.TrustDelta) > 0.01f)
+            parts.Add(choice.TrustDelta > 0 ? $"Уважение +{choice.TrustDelta:F0}" : $"Уважение {choice.TrustDelta:F0}");
+        if (choice.MemoryGain > 0.01f)
+            parts.Add($"Память +{choice.MemoryGain:F0}");
+        if (choice.CuriosityGain > 0.01f)
+            parts.Add($"Любопытство +{choice.CuriosityGain:F0}");
+        if (choice.EmpathyGain > 0.01f)
+            parts.Add($"Эмпатия +{choice.EmpathyGain:F0}");
+        if (choice.AgencyGain > 0.01f)
+            parts.Add($"Воля +{choice.AgencyGain:F0}");
+        if (choice.CourageGain > 0.01f)
+            parts.Add($"Мужество +{choice.CourageGain:F0}");
+
+        if (parts.Count == 0)
+            return "";
+
+        return string.Join("  |  ", parts);
     }
 
     private void UpdateThirdPerson(float dt)
@@ -705,6 +739,7 @@ public class Game : GameWindow
         RenderMiniMap();
         RenderFeedback();
         if (_dialogueNpc != null) RenderDialogue();
+        RenderDialogueFeedback();
         _ui.Render(_shader, _modelL, _viewL, _projL, _colorL, _ambL, _lightL, _fogColL);
     }
 
@@ -768,6 +803,22 @@ public class Game : GameWindow
             _ui.Text(label, cx + 0.012f, cy + 0.006f, textSize * 0.9f, sel ? selectedCol : choiceCol);
             cy += ch + 0.005f;
         }
+    }
+
+    private void RenderDialogueFeedback()
+    {
+        if (_dialogueFeedbackTimer <= 0f || string.IsNullOrEmpty(_dialogueFeedback)) return;
+
+        float alpha = MathF.Min(1f, _dialogueFeedbackTimer / 0.5f);
+        Vector3 color = new(0.25f, 0.85f, 1.0f);
+
+        float size = 0.0042f;
+        float textW = _ui.MeasureText(_dialogueFeedback, size);
+        float fx = 0.5f - textW / 2f;
+        float fy = 0.57f;
+
+        _ui.Rect(fx - 0.015f, fy - 0.004f, textW + 0.03f, 0.038f, new Vector3(0.03f, 0.035f, 0.04f));
+        _ui.Text(_dialogueFeedback, fx, fy + 0.004f, size, color * alpha);
     }
 
     private void RenderMiniMap()
