@@ -411,13 +411,13 @@ public class Game : GameWindow
             Vector3 side = Vector3.Normalize(Vector3.Cross(Vector3.UnitY, pairDir));
 
             // Camera position: behind the midpoint, offset to the side, elevated
-            float camHeight = Math.Max(playerH, npcH) * 0.85f;
+            float camHeight = Math.Max(playerH, npcH) * 0.95f;
             Vector3 camTarget = midpoint - pairDir * (pairLen * 0.25f + 1.5f)
                                + side * (pairLen * 0.15f + 0.8f)
                                + new Vector3(0, camHeight, 0);
 
-            // Look at NPC chest/head area (biased toward NPC, not midpoint)
-            Vector3 lookTarget = npcPos + new Vector3(0, npcH * 0.65f, 0);
+            // Look at NPC head area (upper third of screen)
+            Vector3 lookTarget = npcPos + new Vector3(0, npcH * 0.78f, 0);
 
             // Smooth lerp camera position and look target
             _cam.TargetPos = Vector3.Lerp(_cam.TargetPos, camTarget, lerpFactor);
@@ -734,9 +734,9 @@ public class Game : GameWindow
         Vector3 selectedCol = new(0.16f, 0.48f, 0.78f);
 
         float px = 0.08f;
-        float py = 0.55f;
+        float py = 0.62f;
         float pw = 0.84f;
-        float ph = 0.38f;
+        float ph = 0.33f;
         float pad = 0.025f;
         float lineH = 0.036f;
         float textSize = 0.0045f;
