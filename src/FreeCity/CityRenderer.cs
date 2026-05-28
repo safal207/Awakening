@@ -997,17 +997,45 @@ public class CityRenderer : IDisposable
             float phase = npc.AnimPhase;
             float blend = npc.AnimBlend;
             float idleFactor = 1f - blend;
+            bool isHero = HeroStyle.IsHero(npc);
 
-            // Idle breathing
-            float breathe = MathF.Sin(_animationTime * 2f + npc.Id * 1.7f) * 0.004f;
+            // Sprint detection (hero-only): phase speed relative to walk baseline
+            float sprintFactor = 0f;
+            if (isHero && blend > 0.9f)
+            {
+                float phaseRate = 3.5f * MathF.Abs(npc.Velocity.LengthFast);
+                float walkBaseline = 3.5f * 8f;
+                sprintFactor = MathF.Max(0f, phaseRate / walkBaseline - 1f);
+                sprintFactor = MathF.Min(sprintFactor, 1.5f);
+            }
+
+            // Hero idle: layered breathing with multiple frequencies
+            float breatheHero = 0f;
+            if (isHero && idleFactor > 0.01f)
+            {
+                float t = _animationTime;
+                float heroPhase = npc.Id * 1.7f;
+                float breatheA = MathF.Sin(t * 1.8f + heroPhase) * 0.005f;
+                float breatheB = MathF.Sin(t * 2.6f + heroPhase * 0.7f) * 0.003f;
+                float breatheC = MathF.Sin(t * 1.1f + heroPhase * 1.3f) * 0.002f;
+                breatheHero = (breatheA + breatheB + breatheC) * idleFactor;
+            }
+            float breathe = isHero ? breatheHero : MathF.Sin(_animationTime * 2f + npc.Id * 1.7f) * 0.004f;
 
             // Walk cycle
             float legPhase = MathF.Sin(phase);
-            float bodyBobWalk = MathF.Abs(MathF.Sin(phase)) * 0.03f;
-            float bodyBob = bodyBobWalk * blend + breathe * idleFactor;
+            float cosPhase = MathF.Cos(phase);
+            float bodyBobRaw = MathF.Abs(legPhase);
+            float bodyBobWalk = (bodyBobRaw * bodyBobRaw * (3f - 2f * bodyBobRaw)) * 0.03f;
+            float bodyBob = bodyBobWalk * blend + breathe;
 
-            float swingAmt = legPhase * 0.14f * blend;
-            float armSwingAmt = MathF.Sin(phase + MathF.PI) * 0.10f * blend;
+            // Walk amplitude with sprint boost
+            float walkAmp = 0.14f * blend * (1f + sprintFactor * 0.3f);
+            float swingAmt = legPhase * walkAmp;
+
+            // Slight lateral lean during walk
+            float torsoLean = cosPhase * 0.012f * blend;
+
             // Direction-aware offsets
             float fwdX = MathF.Sin(npc.Rotation);
             float fwdZ = MathF.Cos(npc.Rotation);
@@ -1016,8 +1044,15 @@ public class CityRenderer : IDisposable
 
             float legOffX = fwdX * swingAmt;
             float legOffZ = fwdZ * swingAmt;
-            float armOffX = fwdX * armSwingAmt;
-            float armOffZ = fwdZ * armSwingAmt;
+
+            // Arm swing: wider arc, slight lateral component
+            float armSwingFwd = MathF.Sin(phase + MathF.PI) * 0.12f * blend * (1f + sprintFactor * 0.4f);
+            float armSwingSide = cosPhase * 0.015f * blend;
+            float armOffX = fwdX * armSwingFwd + rightX * armSwingSide;
+            float armOffZ = fwdZ * armSwingFwd + rightZ * armSwingSide;
+
+            // Hero sprint: slight forward lean
+            float sprintLean = sprintFactor * 0.008f;
 
             // === PROPORTIONS (ground-up, exact) ===
             float ankleY = h * 0.018f;
@@ -1142,20 +1177,23 @@ public class CityRenderer : IDisposable
             // === SHOULDERS === (deltoid)
             float shoulderS = shoulderR * 0.42f;
             float shoulderZ = shoulderY + bob;
-            float shrX = shoulderR * 0.9f;
             float shrCol = c.X * 0.9f, shgCol = c.Y * 0.82f, shbCol = c.Z * 0.78f;
-            AddEllipsoid(px - shoulderR, shoulderZ, pz + spineCurve * 0.4f, shoulderS, shoulderS * 0.7f, shoulderS * 0.6f,
+            float upperLeanX = rightX * torsoLean - fwdX * sprintLean;
+            float upperLeanZ = rightZ * torsoLean - fwdZ * sprintLean;
+            AddEllipsoid(px - shoulderR + upperLeanX, shoulderZ, pz + spineCurve * 0.4f + upperLeanZ, shoulderS, shoulderS * 0.7f, shoulderS * 0.6f,
                 shrCol, shgCol, shbCol, 8, 4);
-            AddEllipsoid(px + shoulderR, shoulderZ, pz + spineCurve * 0.4f, shoulderS, shoulderS * 0.7f, shoulderS * 0.6f,
+            AddEllipsoid(px + shoulderR + upperLeanX, shoulderZ, pz + spineCurve * 0.4f + upperLeanZ, shoulderS, shoulderS * 0.7f, shoulderS * 0.6f,
                 shrCol, shgCol, shbCol, 8, 4);
 
             // === NECK === (trapezius taper: wider at base)
-            AddTube(px, shoulderY + bob, pz + spineCurve * 0.5f, neckR, neckR * 1.5f, neckH,
+            AddTube(px + upperLeanX * 0.6f, shoulderY + bob, pz + spineCurve * 0.5f + upperLeanZ * 0.6f, neckR, neckR * 1.5f, neckH,
                 hc.X * 0.85f, hc.Y * 0.8f, hc.Z * 0.78f, 8);
 
             // === HEAD === ellipsoid (slightly tilted forward)
             float headTilt = h * 0.01f;
-            float headCX = px, headCY = headY + bob, headCZ = pz + spineCurve * 0.6f - headTilt;
+            float headLeanX = upperLeanX * 0.8f;
+            float headLeanZ = upperLeanZ * 0.8f;
+            float headCX = px + headLeanX, headCY = headY + bob, headCZ = pz + spineCurve * 0.6f - headTilt + headLeanZ;
             float headRX = headR * 0.82f;
             float headRY = headR * 1.15f;
             float headRZ = headR * 0.95f;
@@ -1213,13 +1251,14 @@ public class CityRenderer : IDisposable
                 float shoulderX = px + side * (shoulderR + armRTop * 0.15f);
                 float shoulderYPos = shoulderY + bob - shoulderS * 0.12f;
 
-                // Swing magnitude (arm swings in opposite phase to leg on same side)
-                float swing = swingPhase * 0.14f * blend;
-                float swingX = fwdX * swing;
-                float swingZ = fwdZ * swing;
+                // Smoothed swing with sprint amplification
+                float swing = swingPhase * walkAmp * 0.85f;
+                float swingX = fwdX * swing + rightX * torsoLean * side;
+                float swingZ = fwdZ * swing + rightZ * torsoLean * side;
 
-                // Elbow bend: arm bends at elbow during swing
-                float elbowBend = (1f - MathF.Abs(swingPhase) * 0.5f) * 0.12f * blend;
+                // Elbow bend: peaks when arm swings back, relaxes forward
+                float swingT = (swingPhase + 1f) * 0.5f;
+                float elbowBend = swingT * 0.14f * blend * (1f + sprintFactor * 0.3f);
                 float elbowOffX = -fwdX * elbowBend * side;
                 float elbowOffZ = -fwdZ * elbowBend;
 
@@ -1228,23 +1267,24 @@ public class CityRenderer : IDisposable
                 float uaTopR = armRTop, uaBotR = armRTop * 0.85f;
                 AddTube(shoulderX, elbowY, pz, uaBotR, uaTopR, armH,
                     armCr * 0.95f, armCg * 0.95f, armCb * 0.95f, 8,
-                    elbowOffX, elbowOffZ,  // top of forearm (elbow)
-                    swingX, swingZ);       // base of upper arm (shoulder)
+                    elbowOffX, elbowOffZ,
+                    swingX, swingZ);
 
-                // Forearm (elbow → wrist)
+                // Forearm (elbow → wrist) with follow-through
                 float wristYPos = elbowY - foreH;
                 float faTopR = armRTop * 0.85f, faBotR = armRBot;
-                float fwdElbow = swingPhase * 0.06f * blend;
+                float followPhase = swingPhase * 0.7f;
+                float fwdElbow = followPhase * 0.08f * blend * (1f + sprintFactor * 0.25f);
                 float fwdElbowX = fwdX * fwdElbow;
                 float fwdElbowZ = fwdZ * fwdElbow;
                 AddTube(shoulderX, wristYPos, pz, faBotR, faTopR, foreH,
                     armCr, armCg, armCb, 8,
-                    0, 0,           // top of forearm (wrist) — slight follow
+                    fwdElbowX * 0.4f, fwdElbowZ * 0.4f,
                     elbowOffX, elbowOffZ);
 
                 // Hand at wrist
-                float handX = shoulderX + fwdElbowX * 0.0f;
-                float handZ = pz;
+                float handX = shoulderX + fwdElbowX * 0.5f;
+                float handZ = pz + fwdElbowZ * 0.5f;
                 AddEllipsoid(handX, wristYPos - handR * 0.3f, handZ,
                     handR * 0.8f, handR * 1.1f, handR * 0.7f,
                     armCr, armCg, armCb, 6, 3);
