@@ -260,8 +260,13 @@ public class Game : GameWindow
                 _city.Awareness.Add(2f);
                 _city.RegisterTalk();
 
+                // Track daily objective
+                bool objectiveCompleted = _city.Progress.RegisterDailyTalk(_dialogueNpc.Id);
+
                 // Build feedback text from stat deltas
                 _dialogueFeedback = BuildChoiceFeedback(choice);
+                if (objectiveCompleted)
+                    _dialogueFeedback = "ЦЕЛЬ ВЫПОЛНЕНА: день стал яснее  |  +2 ПАМ  |  +1 ЛЮБ  |  +1 ВОЛ";
                 _dialogueFeedbackTimer = 3f;
 
                 EndDialogue();
@@ -697,7 +702,7 @@ public class Game : GameWindow
         float y = 0.03f;
         float line = 0.033f;
 
-        float panelH = _city.IsInside ? 0.238f : 0.205f;
+        float panelH = _city.IsInside ? 0.278f : 0.245f;
         _ui.Rect(0.014f, 0.018f, 0.245f, panelH, panel);
         _ui.Rect(0.014f, 0.018f, 0.006f, panelH, accent);
 
@@ -711,6 +716,18 @@ public class Game : GameWindow
         y += line;
         _ui.Text($"МУЖ {(int)_city.Progress.Courage}", x, y, uiScale, textCol);
         y += line;
+
+        // Daily objective
+        if (_city.Progress.DailyObjectiveCompleted)
+        {
+            _ui.Text($"ЦЕЛЬ: ✓", x, y, uiScale, new Vector3(0.3f, 0.8f, 0.4f));
+        }
+        else
+        {
+            _ui.Text($"ЦЕЛЬ: контакт {_city.Progress.DailyTalkProgress}/{HeroProgress.DailyTalkGoal}", x, y, uiScale, warm);
+        }
+        y += line;
+
         if (_city.IsInside)
             _ui.Text($"ВНУТРИ: {_city.InteriorName()}", x, y, uiScale * 0.9f, warm);
 
