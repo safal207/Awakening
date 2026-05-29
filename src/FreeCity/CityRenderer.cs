@@ -1368,8 +1368,13 @@ public class CityRenderer : IDisposable
         GL.Uniform3(context.ColorLocation, -1f, -1f, -1f);
         GL.Uniform3(context.FogColorLocation, fogCol.X, fogCol.Y, fogCol.Z);
 
+        // Ensure depth state for opaque 3D world
+        GL.Enable(EnableCap.DepthTest);
+        GL.DepthMask(true);
+
         if (_inside)
         {
+            GL.Enable(EnableCap.CullFace);
             if (_interiorCount > 0)
             {
                 GL.BindVertexArray(_interiorVao);
