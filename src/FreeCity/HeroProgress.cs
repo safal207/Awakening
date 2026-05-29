@@ -123,13 +123,38 @@ public class HeroProgress
         return false;
     }
 
-    private void EnsureDailyObjectiveForCurrentDay()
+    private void ResetDailyObjectiveForCurrentDay()
     {
-        if (DailyObjectiveDay == Day) return;
         DailyTalkProgress = 0;
         DailyObjectiveDay = Day;
         DailyObjectiveCompleted = false;
         _dailyTalkedNpcs.Clear();
+    }
+
+    private void EnsureDailyObjectiveForCurrentDay()
+    {
+        if (DailyObjectiveDay != Day)
+        {
+            ResetDailyObjectiveForCurrentDay();
+            return;
+        }
+
+        if (DailyTalkProgress < 0 || DailyTalkProgress > DailyTalkGoal)
+        {
+            ResetDailyObjectiveForCurrentDay();
+            return;
+        }
+
+        if (DailyObjectiveCompleted)
+        {
+            DailyTalkProgress = DailyTalkGoal;
+            return;
+        }
+
+        if (DailyTalkProgress != _dailyTalkedNpcs.Count)
+        {
+            ResetDailyObjectiveForCurrentDay();
+        }
     }
 
     public void LoadDailyObjective(int objectiveDay, int talkProgress, bool completed, IEnumerable<int>? talkedNpcs = null)
@@ -141,6 +166,7 @@ public class HeroProgress
         if (talkedNpcs != null)
             foreach (var id in talkedNpcs)
                 _dailyTalkedNpcs.Add(id);
+        EnsureDailyObjectiveForCurrentDay();
     }
 
     public double ApplyOfflineGrowth(double minutesAway)
