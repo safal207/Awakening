@@ -157,7 +157,7 @@ public class CityRenderer : IDisposable
         float x = block.X, z = block.Z;
         float w = block.Width, d = block.Depth;
         float h = 3f;
-        float inset = 0.5f;
+        float inset = 0.3f;
         float ix = x + inset, iz = z + inset;
         float iw = w - inset * 2, id = d - inset * 2;
 
@@ -170,15 +170,20 @@ public class CityRenderer : IDisposable
         // Ceiling
         Quad(ref v, ix, h, iz, ix + iw, h, iz, ix + iw, h, iz + id, ix, h, iz + id, ceilCol.X, ceilCol.Y, ceilCol.Z);
 
-        // Walls (inward-facing)
-        // Front (positive Z)
-        Quad(ref v, ix, 0, iz + id, ix + iw, 0, iz + id, ix + iw, h, iz + id, ix, h, iz + id, wallCol.X * 0.7f, wallCol.Y * 0.7f, wallCol.Z * 0.7f);
-        // Back (negative Z)
-        Quad(ref v, ix + iw, 0, iz, ix, 0, iz, ix, h, iz, ix + iw, h, iz, wallCol.X * 0.5f, wallCol.Y * 0.5f, wallCol.Z * 0.5f);
+        // Walls (inward-facing, thick enough to block outside view)
+        // Front (positive Z) — door side, darker
+        Quad(ref v, ix, 0, iz + id, ix + iw, 0, iz + id, ix + iw, h, iz + id, ix, h, iz + id, wallCol.X * 0.65f, wallCol.Y * 0.65f, wallCol.Z * 0.65f);
+        // Back (negative Z) — solid wall, darkest
+        Quad(ref v, ix + iw, 0, iz, ix, 0, iz, ix, h, iz, ix + iw, h, iz, wallCol.X * 0.45f, wallCol.Y * 0.45f, wallCol.Z * 0.45f);
         // Right (positive X)
-        Quad(ref v, ix + iw, 0, iz, ix + iw, 0, iz + id, ix + iw, h, iz + id, ix + iw, h, iz, wallCol.X * 0.6f, wallCol.Y * 0.6f, wallCol.Z * 0.6f);
+        Quad(ref v, ix + iw, 0, iz, ix + iw, 0, iz + id, ix + iw, h, iz + id, ix + iw, h, iz, wallCol.X * 0.55f, wallCol.Y * 0.55f, wallCol.Z * 0.55f);
         // Left (negative X)
-        Quad(ref v, ix, 0, iz, ix, 0, iz + id, ix, h, iz + id, ix, h, iz, wallCol.X * 0.8f, wallCol.Y * 0.8f, wallCol.Z * 0.8f);
+        Quad(ref v, ix, 0, iz, ix, 0, iz + id, ix, h, iz + id, ix, h, iz, wallCol.X * 0.75f, wallCol.Y * 0.75f, wallCol.Z * 0.75f);
+
+        // Back wall accent — darker strip to emphasize solidity
+        float stripH = 0.15f;
+        Quad(ref v, ix + iw, 0, iz, ix, 0, iz, ix, stripH, iz, ix + iw, stripH, iz,
+             wallCol.X * 0.3f, wallCol.Y * 0.3f, wallCol.Z * 0.3f);
 
         // Door marker (lighter rectangle on front wall)
         float doorW = 1.2f, doorH = 2.2f;
@@ -323,6 +328,7 @@ public class CityRenderer : IDisposable
 
     public HeroProgress Progress => _progress;
     public int Seed => _seed;
+    public IReadOnlyList<CityBlock> Blocks => _blocks;
     public IReadOnlyList<InterestMarker> InterestMarkers => _markers;
     public string FeedbackMessage => _feedbackMessage;
     public float FeedbackTimer => _feedbackTimer;
@@ -346,10 +352,15 @@ public class CityRenderer : IDisposable
         _seed = seed;
         _progress = progress ?? new HeroProgress();
         _blocks = CityGenerator.Generate(seed);
+        float buildingInset = 0.5f;
         foreach (var block in _blocks)
         {
             if (block.Type == BuildingType.Tree || block.Type == BuildingType.Lamp) continue;
-            _buildingBounds.Add(new Box2(block.X, block.Z, block.X + block.Width, block.Z + block.Depth));
+            _buildingBounds.Add(new Box2(
+                block.X + buildingInset,
+                block.Z + buildingInset,
+                block.X + block.Width - buildingInset,
+                block.Z + block.Depth - buildingInset));
         }
         BuildInterestMarkers();
         SpawnNpcs(seed);
@@ -535,48 +546,51 @@ public class CityRenderer : IDisposable
         var v = new List<float>();
         var wv = new List<float>(); // ночные окна
 
+        float inset = 0.5f; // отступ от края блока для визуального разделения
+
         foreach (var b in _blocks)
         {
             if (b.Type == BuildingType.Tree || b.Type == BuildingType.Lamp) continue;
 
-            float x = b.X, z = b.Z, h = b.Height * 2.5f;
+            float x = b.X + inset, z = b.Z + inset;
+            float w = b.Width - inset * 2, d = b.Depth - inset * 2;
+            float h = b.Height * 2.5f;
             var col = b.Color;
             var acc = b.Accent;
-            int windows = b.Height * 2;
 
-            Box(ref v, x, 0, z, b.Width, h, b.Depth, col.X, col.Y, col.Z);
+            Box(ref v, x, 0, z, w, h, d, col.X, col.Y, col.Z);
 
             // Крыша
-            Quad(ref v, x - 0.3f, h, z - 0.3f, x + b.Width + 0.3f, h, z - 0.3f,
-                         x + b.Width + 0.3f, h, z + b.Depth + 0.3f, x - 0.3f, h, z + b.Depth + 0.3f,
+            Quad(ref v, x - 0.3f, h, z - 0.3f, x + w + 0.3f, h, z - 0.3f,
+                         x + w + 0.3f, h, z + d + 0.3f, x - 0.3f, h, z + d + 0.3f,
                          acc.X * 1.2f, acc.Y * 1.2f, acc.Z * 1.2f);
 
             // Окна (квадратики на фасаде)
             var rng = new Random(b.X * 31 + b.Z * 17);
+            int maxWindows = Math.Max(1, (int)(w / 3f));
             for (int f = 0; f < b.Height; f++)
             {
                 float fy = 1f + f * 2.5f;
-                for (int wi = 0; wi < 3; wi++)
+                for (int wi = 0; wi < maxWindows; wi++)
                 {
-                    bool lit = rng.NextDouble() < 0.6f; // 60% окон горят
-                    float wx = x + 1.5f + wi * 2.5f;
+                    bool lit = rng.NextDouble() < 0.6f;
+                    float wx = x + 1f + wi * (w - 2f) / maxWindows;
+                    float winW = Math.Min(1f, (w - 2f) / maxWindows - 0.3f);
                     // Передняя сторона — дневные окна
-                    Quad(ref v, wx, fy, z + b.Depth + 0.01f, wx + 1f, fy, z + b.Depth + 0.01f,
-                                 wx + 1f, fy + 1.5f, z + b.Depth + 0.01f, wx, fy + 1.5f, z + b.Depth + 0.01f,
+                    Quad(ref v, wx, fy, z + d + 0.01f, wx + winW, fy, z + d + 0.01f,
+                                 wx + winW, fy + 1.5f, z + d + 0.01f, wx, fy + 1.5f, z + d + 0.01f,
                                  0.5f, 0.6f, 0.8f);
-                    // Передняя сторона — ночные окна (жёлтые)
                     if (lit)
-                        Quad(ref wv, wx, fy, z + b.Depth + 0.02f, wx + 1f, fy, z + b.Depth + 0.02f,
-                                     wx + 1f, fy + 1.5f, z + b.Depth + 0.02f, wx, fy + 1.5f, z + b.Depth + 0.02f,
+                        Quad(ref wv, wx, fy, z + d + 0.02f, wx + winW, fy, z + d + 0.02f,
+                                     wx + winW, fy + 1.5f, z + d + 0.02f, wx, fy + 1.5f, z + d + 0.02f,
                                      0.95f, 0.75f, 0.2f);
                     // Задняя сторона — дневные окна
-                    Quad(ref v, wx + 1f, fy, z - 0.01f, wx, fy, z - 0.01f,
-                                 wx, fy + 1.5f, z - 0.01f, wx + 1f, fy + 1.5f, z - 0.01f,
+                    Quad(ref v, wx + winW, fy, z - 0.01f, wx, fy, z - 0.01f,
+                                 wx, fy + 1.5f, z - 0.01f, wx + winW, fy + 1.5f, z - 0.01f,
                                  0.5f, 0.6f, 0.8f);
-                    // Задняя сторона — ночные окна
                     if (lit)
-                        Quad(ref wv, wx + 1f, fy, z - 0.02f, wx, fy, z - 0.02f,
-                                     wx, fy + 1.5f, z - 0.02f, wx + 1f, fy + 1.5f, z - 0.02f,
+                        Quad(ref wv, wx + winW, fy, z - 0.02f, wx, fy, z - 0.02f,
+                                     wx, fy + 1.5f, z - 0.02f, wx + winW, fy + 1.5f, z - 0.02f,
                                      0.95f, 0.75f, 0.2f);
                 }
             }
