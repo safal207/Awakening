@@ -102,7 +102,7 @@ public class HeroProgress
 
     /// <summary>
     /// Register a dialogue contact with an NPC for the daily objective.
-    /// Returns true if this is a new unique contact today.
+    /// Returns true only when the daily objective is completed by this contact.
     /// </summary>
     public bool RegisterDailyTalk(int npcId)
     {
@@ -111,13 +111,15 @@ public class HeroProgress
         if (!_dailyTalkedNpcs.Add(npcId)) return false;
 
         DailyTalkProgress++;
+
         if (DailyTalkProgress >= DailyTalkGoal)
         {
             DailyObjectiveCompleted = true;
             AddQualities(memory: 2f, curiosity: 1f, agency: 1f);
             return true;
         }
-        return true;
+
+        return false;
     }
 
     public void LoadDailyObjective(int objectiveDay, int talkProgress, bool completed, IEnumerable<int>? talkedNpcs = null)

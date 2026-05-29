@@ -266,7 +266,7 @@ public class Game : GameWindow
                 // Build feedback text from stat deltas
                 _dialogueFeedback = BuildChoiceFeedback(choice);
                 if (objectiveCompleted)
-                    _dialogueFeedback = "ЦЕЛЬ ВЫПОЛНЕНА: день стал яснее  |  +2 ПАМЯТЬ  |  +1 ВОЛЯ";
+                    _dialogueFeedback = "ЦЕЛЬ ВЫПОЛНЕНА: день стал яснее  |  +2 ПАМ  |  +1 ЛЮБ  |  +1 ВОЛ";
                 _dialogueFeedbackTimer = 3f;
 
                 EndDialogue();
