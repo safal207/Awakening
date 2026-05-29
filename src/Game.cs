@@ -30,6 +30,8 @@ public class Game : GameWindow
     private const float ZoomSpeed = 18f;
     private const float WalkSpeed = 8f;
     private const float AutoSaveIntervalSeconds = 30f;
+    private const float MaxMouseDeltaPerFrame = 40f;
+    private const float MouseSmoothingSpeed = 18f;
 
     private readonly Camera _cam = new();
     private readonly Input _input;
@@ -66,6 +68,7 @@ public class Game : GameWindow
     private InteractionDetector? _interactionDetector;
     private InteractionResult _currentInteraction;
     private float _camDist = 14f, _camYaw, _camPitchDegrees = DefaultCameraPitchDegrees;
+    private float _smoothedMouseDx, _smoothedMouseDy;
     private SpriteRenderer? _spriteRenderer;
     private Texture? _logoSplash;
 
@@ -188,9 +191,15 @@ public class Game : GameWindow
         }
         else if (_captured && _city?.Player != null)
         {
-            // Мышь + геймпад: поворот камеры вокруг игрока
-            _camYaw -= _input.Dx * MouseYawSensitivity;
-            _camPitchDegrees = Math.Clamp(_camPitchDegrees - _input.Dy * MousePitchSensitivity, MinCameraPitchDegrees, MaxCameraPitchDegrees);
+            // Мышь + геймпад: поворот камеры вокруг игрока (сглаженный)
+            float rawDx = Math.Clamp(_input.Dx, -MaxMouseDeltaPerFrame, MaxMouseDeltaPerFrame);
+            float rawDy = Math.Clamp(_input.Dy, -MaxMouseDeltaPerFrame, MaxMouseDeltaPerFrame);
+            float mouseSmooth = Math.Clamp(MouseSmoothingSpeed * dt, 0f, 1f);
+            _smoothedMouseDx = MathHelper.Lerp(_smoothedMouseDx, rawDx, mouseSmooth);
+            _smoothedMouseDy = MathHelper.Lerp(_smoothedMouseDy, rawDy, mouseSmooth);
+
+            _camYaw -= _smoothedMouseDx * MouseYawSensitivity;
+            _camPitchDegrees = Math.Clamp(_camPitchDegrees - _smoothedMouseDy * MousePitchSensitivity, MinCameraPitchDegrees, MaxCameraPitchDegrees);
             if (_input.GpConnected)
             {
                 _camYaw -= _input.GpRightX * 4f * dt;
@@ -357,6 +366,8 @@ public class Game : GameWindow
         _captured = true;
         CursorState = CursorState.Grabbed;
         _input.ResetMouse();
+        _smoothedMouseDx = 0f;
+        _smoothedMouseDy = 0f;
     }
 
     private void StartDialogue(NpcCharacter target)
@@ -725,7 +736,7 @@ public class Game : GameWindow
         // Daily objective
         if (_city.Progress.DailyObjectiveCompleted)
         {
-            _ui.Text("ЦЕЛЬ ✓", x, y, uiScale, new Vector3(0.3f, 0.8f, 0.4f));
+            _ui.Text($"ЦЕЛЬ {HeroProgress.DailyTalkGoal}/{HeroProgress.DailyTalkGoal}", x, y, uiScale, new Vector3(0.3f, 0.8f, 0.4f));
         }
         else
         {
