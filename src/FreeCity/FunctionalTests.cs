@@ -143,13 +143,26 @@ public static class FunctionalTests
         var progress = new HeroProgress();
         var city = new CityRenderer(seed: 4242, progress);
 
-        Vector3 inBuilding = city.InterestMarkers.Count > 0 ? city.InterestMarkers[0].Position : Vector3.Zero;
-        bool walkable = city.IsPositionWalkable(inBuilding, 0f);
-        Expect(!walkable, "center of a building is not walkable", failures);
+        // Find center of a building (not tree/lamp) for collision test
+        Vector3 inBuilding = Vector3.Zero;
+        bool foundBuilding = false;
+        foreach (var block in city.Blocks)
+        {
+            if (block.Type == BuildingType.Tree || block.Type == BuildingType.Lamp) continue;
+            inBuilding = new Vector3(block.X + block.Width * 0.5f, 0f, block.Z + block.Depth * 0.5f);
+            foundBuilding = true;
+            break;
+        }
 
-        Vector3 clamped = city.ClampToWalkable(inBuilding, 0.3f);
-        bool clampedWalkable = city.IsPositionWalkable(clamped, 0f);
-        Expect(clampedWalkable, "ClampToWalkable pushes position out of building", failures);
+        if (foundBuilding)
+        {
+            bool walkable = city.IsPositionWalkable(inBuilding, 0f);
+            Expect(!walkable, "center of a building is not walkable", failures);
+
+            Vector3 clamped = city.ClampToWalkable(inBuilding, 0.3f);
+            bool clampedWalkable = city.IsPositionWalkable(clamped, 0f);
+            Expect(clampedWalkable, "ClampToWalkable pushes position out of building", failures);
+        }
 
         Vector3 onRoad = new(-1f, 0f, 5f);
         bool roadWalkable = city.IsPositionWalkable(onRoad, 0f);
