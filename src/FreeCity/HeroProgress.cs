@@ -106,8 +106,9 @@ public class HeroProgress
     /// </summary>
     public bool RegisterDailyTalk(int npcId)
     {
+        EnsureDailyObjectiveForCurrentDay();
+
         if (DailyObjectiveCompleted) return false;
-        if (DailyObjectiveDay != Day) return false;
         if (!_dailyTalkedNpcs.Add(npcId)) return false;
 
         DailyTalkProgress++;
@@ -120,6 +121,15 @@ public class HeroProgress
         }
 
         return false;
+    }
+
+    private void EnsureDailyObjectiveForCurrentDay()
+    {
+        if (DailyObjectiveDay == Day) return;
+        DailyTalkProgress = 0;
+        DailyObjectiveDay = Day;
+        DailyObjectiveCompleted = false;
+        _dailyTalkedNpcs.Clear();
     }
 
     public void LoadDailyObjective(int objectiveDay, int talkProgress, bool completed, IEnumerable<int>? talkedNpcs = null)

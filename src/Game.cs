@@ -266,7 +266,7 @@ public class Game : GameWindow
                 // Build feedback text from stat deltas
                 _dialogueFeedback = BuildChoiceFeedback(choice);
                 if (objectiveCompleted)
-                    _dialogueFeedback = "ЦЕЛЬ ВЫПОЛНЕНА: день стал яснее  |  +2 ПАМ  |  +1 ЛЮБ  |  +1 ВОЛ";
+                    _dialogueFeedback = "ЦЕЛЬ ВЫПОЛНЕНА  |  ПАМ +2  ЛЮБ +1  ВОЛ +1";
                 _dialogueFeedbackTimer = 3f;
 
                 EndDialogue();
@@ -403,24 +403,29 @@ public class Game : GameWindow
         var parts = new List<string>();
 
         if (MathF.Abs(choice.FriendlinessDelta) > 0.01f)
-            parts.Add(choice.FriendlinessDelta > 0 ? $"Доверие +{choice.FriendlinessDelta:F0}" : $"Доверие {choice.FriendlinessDelta:F0}");
+            parts.Add(choice.FriendlinessDelta > 0 ? $"ДОВ +{choice.FriendlinessDelta:F0}" : $"ДОВ {choice.FriendlinessDelta:F0}");
         if (MathF.Abs(choice.TrustDelta) > 0.01f)
-            parts.Add(choice.TrustDelta > 0 ? $"Уважение +{choice.TrustDelta:F0}" : $"Уважение {choice.TrustDelta:F0}");
+            parts.Add(choice.TrustDelta > 0 ? $"УВ +{choice.TrustDelta:F0}" : $"УВ {choice.TrustDelta:F0}");
         if (choice.MemoryGain > 0.01f)
-            parts.Add($"Память +{choice.MemoryGain:F0}");
+            parts.Add($"ПАМ +{choice.MemoryGain:F0}");
         if (choice.CuriosityGain > 0.01f)
-            parts.Add($"Любопытство +{choice.CuriosityGain:F0}");
+            parts.Add($"ЛЮБ +{choice.CuriosityGain:F0}");
         if (choice.EmpathyGain > 0.01f)
-            parts.Add($"Эмпатия +{choice.EmpathyGain:F0}");
+            parts.Add($"ЭМП +{choice.EmpathyGain:F0}");
         if (choice.AgencyGain > 0.01f)
-            parts.Add($"Воля +{choice.AgencyGain:F0}");
+            parts.Add($"ВОЛ +{choice.AgencyGain:F0}");
         if (choice.CourageGain > 0.01f)
-            parts.Add($"Мужество +{choice.CourageGain:F0}");
+            parts.Add($"МУЖ +{choice.CourageGain:F0}");
 
         if (parts.Count == 0)
             return "";
 
-        return string.Join("  |  ", parts);
+        // Max 3 per line, split into at most 2 lines
+        if (parts.Count <= 3)
+            return string.Join("  ", parts);
+
+        return string.Join("  ", parts[0], parts[1], parts[2]) + "\n" +
+               string.Join("  ", parts.GetRange(3, parts.Count - 3));
     }
 
     private void UpdateThirdPerson(float dt)
@@ -720,11 +725,11 @@ public class Game : GameWindow
         // Daily objective
         if (_city.Progress.DailyObjectiveCompleted)
         {
-            _ui.Text($"ЦЕЛЬ: ✓", x, y, uiScale, new Vector3(0.3f, 0.8f, 0.4f));
+            _ui.Text("ЦЕЛЬ ✓", x, y, uiScale, new Vector3(0.3f, 0.8f, 0.4f));
         }
         else
         {
-            _ui.Text($"ЦЕЛЬ: контакт {_city.Progress.DailyTalkProgress}/{HeroProgress.DailyTalkGoal}", x, y, uiScale, warm);
+            _ui.Text($"ЦЕЛЬ {_city.Progress.DailyTalkProgress}/{HeroProgress.DailyTalkGoal}", x, y, uiScale, warm);
         }
         y += line;
 
@@ -828,14 +833,26 @@ public class Game : GameWindow
 
         float alpha = MathF.Min(1f, _dialogueFeedbackTimer / 0.5f);
         Vector3 color = new(0.25f, 0.85f, 1.0f);
+        float size = 0.0038f;
 
-        float size = 0.0042f;
-        float textW = _ui.MeasureText(_dialogueFeedback, size);
-        float fx = 0.5f - textW / 2f;
-        float fy = 0.57f;
+        string[] lines = _dialogueFeedback.Split('\n');
+        float maxW = 0f;
+        foreach (var line in lines)
+        {
+            float w = _ui.MeasureText(line, size);
+            if (w > maxW) maxW = w;
+        }
 
-        _ui.Rect(fx - 0.015f, fy - 0.004f, textW + 0.03f, 0.038f, new Vector3(0.03f, 0.035f, 0.04f));
-        _ui.Text(_dialogueFeedback, fx, fy + 0.004f, size, color * alpha);
+        float fx = 0.5f - maxW / 2f;
+        float fy = 0.88f;
+        float lineH = 0.028f;
+        float boxH = lines.Length * lineH + 0.012f;
+
+        _ui.Rect(fx - 0.015f, fy - 0.006f, maxW + 0.03f, boxH, new Vector3(0.03f, 0.035f, 0.04f));
+        for (int i = 0; i < lines.Length; i++)
+        {
+            _ui.Text(lines[i], fx, fy + i * lineH, size, color * alpha);
+        }
     }
 
     private void RenderMiniMap()
