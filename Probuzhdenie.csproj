@@ -5,6 +5,10 @@
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <Product>Пробуждение</Product>
+    <Version>0.3.0-alpha</Version>
+    <Authors>Probuzhdenie contributors</Authors>
+    <Description>Атмосферная low-poly игра о пробуждении героя в повторяющемся городе.</Description>
+    <Copyright>Copyright © 2026 Probuzhdenie contributors</Copyright>
     <AssemblyName>Probuzhdenie</AssemblyName>
     <RootNamespace>Probuzhdenie</RootNamespace>
     <AssemblyTitle>Пробуждение</AssemblyTitle>

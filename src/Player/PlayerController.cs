@@ -62,7 +62,14 @@ public sealed class PlayerController
 
         bool sprint = _input != null && (_input.KeyDown(Keys.LeftShift) || _input.GpSprintHeld);
 
-        // Apply movement
+        UpdateMovement(dt, move, sprint);
+    }
+
+    internal void UpdateMovement(float dt, Vector3 move, bool sprint)
+    {
+        var player = _city.Player;
+        if (player == null || !float.IsFinite(dt) || dt <= 0) return;
+
         if (move.LengthSquared > 0.1f)
         {
             if (move.LengthSquared > 1f) move.Normalize();
@@ -76,7 +83,7 @@ public sealed class PlayerController
                 : Math.Max(targetSpeed, _currentSpeed - Decel * dt);
 
             Vector3 desiredPos = player.Position + _targetVel.Normalized() * _currentSpeed * dt;
-            desiredPos = _city.ClampToWalkable(desiredPos, 0.3f);
+            desiredPos = _city.ClampPlayerToWalkable(desiredPos, 0.3f);
             desiredPos = _city.AdjustForNpcCollision(desiredPos, 0.3f, player);
             Vector3 actualMove = desiredPos - player.Position;
             player.Position = desiredPos;
@@ -95,13 +102,13 @@ public sealed class PlayerController
         {
             _targetVel = Vector3.Zero;
             _currentSpeed = Math.Max(0f, _currentSpeed - Decel * dt);
-            if (_currentSpeed > 0.01f)
+            if (_currentSpeed > 0.01f && player.Velocity.LengthSquared > 0.0001f)
             {
                 Vector3 desiredPos = player.Position + player.Velocity.Normalized() * _currentSpeed * dt;
-                desiredPos = _city.ClampToWalkable(desiredPos, 0.3f);
+                desiredPos = _city.ClampPlayerToWalkable(desiredPos, 0.3f);
                 desiredPos = _city.AdjustForNpcCollision(desiredPos, 0.3f, player);
+                player.Velocity = (desiredPos - player.Position) / Math.Max(dt, 0.0001f);
                 player.Position = desiredPos;
-                player.Velocity = (player.Velocity.Normalized() * _currentSpeed);
             }
             else
             {
@@ -113,9 +120,15 @@ public sealed class PlayerController
             }
         }
 
-        // Animation
-        player.AnimPhase += _currentSpeed * 3.5f * dt;
-        player.AnimBlend = Math.Clamp(_currentSpeed / WalkSpeed, 0f, 1f);
+        // Animate actual travel, so a blocked character does not walk in place.
+        float actualSpeed = player.Velocity.Length;
+        player.AnimPhase += actualSpeed * 3.5f * dt;
+        player.AnimBlend = Math.Clamp(actualSpeed / WalkSpeed, 0f, 1f);
+        if (actualSpeed < 0.01f)
+        {
+            CurrentState = PlayerState.Idle;
+            if (player.State == NpcState.Walking) player.State = NpcState.Relaxing;
+        }
     }
 
     public void ResetMotion()
@@ -125,6 +138,7 @@ public sealed class PlayerController
         if (_city.Player != null)
         {
             _city.Player.Velocity = Vector3.Zero;
+            _city.Player.AnimBlend = 0;
             _city.Player.State = NpcState.Relaxing;
         }
         CurrentState = PlayerState.Idle;

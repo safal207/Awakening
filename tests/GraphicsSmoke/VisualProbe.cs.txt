@@ -1,0 +1,330 @@
+using System;
+using System.IO;
+using System.IO.Compression;
+using System.Linq;
+using System.Reflection;
+using System.Text;
+using System.Diagnostics;
+using System.Text.Json;
+using OpenTK.Graphics.OpenGL4;
+using OpenTK.Mathematics;
+using OpenTK.Windowing.Common;
+using Probuzhdenie;
+using Probuzhdenie.FreeCity;
+
+if (Array.IndexOf(args, "--mesh-benchmark") >= 0)
+{
+    var city = new CityRenderer(seed: 424242);
+    var mesh = new CharacterMesh();
+    bool allFull = Array.IndexOf(args, "--all-full") >= 0;
+    void Build(int frame)
+    {
+        mesh.Clear();
+        foreach(var npc in city.Npcs)
+        {
+            npc.AnimBlend = 1;
+            npc.AnimPhase = frame * .07f;
+            var detail = allFull || npc==city.Player ? CharacterDetail.Full :
+                CharacterMesh.DetailForDistance(Vector3.DistanceSquared(npc.Position,city.Player!.Position));
+            mesh.Append(npc,frame / 60f, detail: detail);
+        }
+    }
+    for(int i=0;i<16;i++)Build(i);
+    double[] times=new double[120];
+    long allocated=GC.GetAllocatedBytesForCurrentThread();
+    for(int i=0;i<times.Length;i++) {
+        long start=Stopwatch.GetTimestamp();
+        Build(i);
+        times[i]=Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+    }
+    allocated=GC.GetAllocatedBytesForCurrentThread()-allocated;
+    Array.Sort(times);
+    string report=JsonSerializer.Serialize(new {
+        AllFull=allFull, Frames=times.Length, Npcs=city.Npcs.Count, Vertices=mesh.VertexCount,
+        P50Ms=times[60], P95Ms=times[114], AllocatedBytes=allocated,
+        BufferBytes=mesh.Data.Length*sizeof(float)
+    },new JsonSerializerOptions{WriteIndented=true});
+    File.WriteAllText("artifacts/visual-refresh/mesh-benchmark-"+(allFull?"full":"lod")+".json",report);
+    Console.WriteLine(report);
+}
+else if (Array.IndexOf(args, "--runtime-smoke") >= 0)
+{
+    using var game = new RuntimeProbe(RuntimeProfileOptions.TryParse(args)
+        ?? new RuntimeProfileOptions { DurationSeconds = 30, ReportPath = "artifacts/visual-refresh/runtime-smoke.json" });
+    game.Run();
+}
+else
+{
+    using var game = new VisualProbe();
+    game.Run();
+}
+
+sealed class RuntimeProbe : Game
+{
+    readonly Stopwatch clock = new();
+    readonly double limit;
+    int updates, renders;
+    double nextLog;
+    public RuntimeProbe(RuntimeProfileOptions options) : base(options) { limit = options.DurationSeconds + 15; }
+    protected override void OnLoad()
+    {
+        base.OnLoad();
+        ClientSize = new Vector2i(1280, 720);
+        WindowState = WindowState.Normal;
+        Console.WriteLine($"Runtime window: {ClientSize}, {WindowState}; VSync={VSync}");
+        clock.Start();
+    }
+    protected override void OnUpdateFrame(FrameEventArgs args)
+    {
+        if (clock.Elapsed.TotalSeconds > limit) { Console.WriteLine("Watchdog closed incomplete profile"); Close(); return; }
+        if (clock.Elapsed.TotalSeconds >= nextLog)
+        {
+            Console.WriteLine($"Wall={clock.Elapsed.TotalSeconds:F1}s Updates={updates} Renders={renders} Size={ClientSize} State={WindowState}");
+            nextLog += 10;
+        }
+        updates++;
+        base.OnUpdateFrame(args);
+    }
+    protected override void OnRenderFrame(FrameEventArgs args)
+    {
+        renders++;
+        base.OnRenderFrame(args);
+    }
+}
+
+sealed class VisualProbe : Game
+{
+    const string Output = "artifacts/visual-refresh";
+    const BindingFlags Private = BindingFlags.Instance | BindingFlags.NonPublic;
+    int frame, stage, minimizedUpdates;
+    readonly (int W, int H, string Screen, string Name)[] shots = {
+        (1280,720,"MainMenu","menu-1280"),
+        (960,540,"Settings","settings-960"),
+        (1920,1080,"Ending","ending-1920"),
+        (960,900,"MainMenu","menu-tall"),
+        (1440,900,"MainMenu","hero-turnaround"),
+        (1280,720,"Playing","hero-city"),
+        (1280,720,"Playing","city-evening"),
+        (1280,720,"Playing","city-night"),
+        (1280,720,"Playing","city-park"),
+        (1280,720,"Playing","hero-interior")
+    };
+    public VisualProbe() : base(new RuntimeProfileOptions {
+        DurationSeconds=600, ReportPath=Output+"/visual-profile.json" }) {}
+    object Get(string field) => typeof(Game).GetField(field, Private)!.GetValue(this)!;
+    void Set(string field, object value) => typeof(Game).GetField(field, Private)!.SetValue(this,value);
+    void Call(string method) => typeof(Game).GetMethod(method, Private)!.Invoke(this,null);
+    protected override void OnLoad()
+    {
+        Directory.CreateDirectory(Output);
+        base.OnLoad();
+        VSync = VSyncMode.On;
+        Console.WriteLine("GPU: " + GL.GetString(StringName.Renderer));
+        Console.WriteLine("MSAA samples: " + GL.GetInteger(GetPName.Samples));
+        CheckMenuInput();
+        Configure();
+    }
+    void CheckMenuInput()
+    {
+        var input=(Input)Get("_input");
+        void InputField(string field,object value) => typeof(Input).GetField(field,Private)!.SetValue(input,value);
+        void Screen(string name) {
+            var field=typeof(Game).GetField("_screen",Private)!;
+            field.SetValue(this,Enum.Parse(field.FieldType,name));
+        }
+        void Mouse(float x,float y,float dx,bool pressed,bool held) {
+            InputField("_last",new Vector2(x*ClientSize.X,y*ClientSize.Y));
+            InputField("<Dx>k__BackingField",dx);
+            InputField("<LmbPressed>k__BackingField",pressed);
+            InputField("<Lmb>k__BackingField",held);
+        }
+        Screen("MainMenu");
+        Mouse(.2f,.54f,0,true,true);
+        Call("UpdateMenu");
+        if(Get("_screen").ToString()!="Settings") throw new Exception("Menu click did not select Settings");
+        Screen("MainMenu"); Set("_menuIndex",0); Set("_heroPreviewYaw",0f);
+        Mouse(.75f,.5f,30,true,true);Call("UpdateMenu");
+        if(Math.Abs((float)Get("_heroPreviewYaw")-.36f)>.0001f)throw new Exception("Preview drag did not rotate");
+        Mouse(.2f,.54f,15,false,true);Call("UpdateMenu");
+        if(Get("_screen").ToString()!="MainMenu" || Math.Abs((float)Get("_heroPreviewYaw")-.54f)>.0001f)
+            throw new Exception("Preview drag leaked into menu selection");
+        Mouse(0,0,0,false,false);Call("UpdateMenu");
+        if((bool)Get("_rotatingPreview"))throw new Exception("Preview drag did not release");
+        Console.WriteLine("Menu click, preview drag, drag capture and release: passed (scripted input)");
+    }
+    void Configure()
+    {
+        var shot = shots[stage];
+        ClientSize = new Vector2i(shot.W,shot.H);
+        var field = typeof(Game).GetField("_screen",Private)!;
+        field.SetValue(this,Enum.Parse(field.FieldType,shot.Screen));
+        Set("_heroPreviewTime",0f);
+        Set("_heroPreviewYaw",0f);
+        if(stage >= 5)
+        {
+            var city=(CityRenderer)Get("_city");
+            city.TimeOfDay = stage == 6 ? 18.4f : stage == 7 ? 23f : 12f;
+            if(stage<8) city.Player!.Position=new Vector3(12,0,12);
+            else if(stage==8)
+            {
+                var park = city.Blocks.Where(b => b.Type == BuildingType.Tree)
+                    .OrderBy(b => b.X * b.X + b.Z * b.Z).First();
+                city.Player!.Position = new Vector3(park.X + 5, 0, park.Z + 8);
+                Set("_camDist", 6f);
+            }
+            else {
+                var block=city.Blocks.First(b=>b.Type!=BuildingType.Tree && b.Type!=BuildingType.Lamp);
+                Vector3 door=new(block.X+block.Width*.5f,0,block.Z+block.Depth);
+                Vector3 entered=city.TryEnterInterior(door) ?? throw new Exception("Interior entry failed");
+                Vector3 smallStep=city.ClampPlayerToWalkable(entered+new Vector3(.01f,0,0),.3f);
+                if(Vector3.Distance(smallStep,entered)>.02f)throw new Exception("Interior movement jumped outside");
+                city.Player!.Position=new Vector3(block.X+block.Width*.5f,0,block.Z+block.Depth*.5f);
+                Set("_camDist",4f);
+                Console.WriteLine("Interior entry and small movement: passed");
+            }
+            Set("_camYaw",0f);
+            Set("_camPitchDegrees",10f);
+            typeof(Game).GetMethod("UpdateThirdPerson",Private)!.Invoke(this,new object[]{0f});
+            ((Camera)Get("_cam")).SnapToTarget();
+            typeof(Game).GetMethod("UpdateThirdPerson",Private)!.Invoke(this,new object[]{0f});
+            city.UpdateNpcs(0);
+        }
+    }
+    protected override void OnUpdateFrame(FrameEventArgs args)
+    {
+        if(stage != shots.Length || ++minimizedUpdates < 3) return;
+        Console.WriteLine("Minimized window size: "+ClientSize);
+        var city = (CityRenderer)Get("_city");
+        float before = city.TimeOfDay;
+        base.OnUpdateFrame(new FrameEventArgs(1.0/60));
+        if (city.TimeOfDay != before) throw new Exception("Minimized game advanced the world");
+        base.OnRenderFrame(new FrameEventArgs(1.0/60));
+        WindowState = WindowState.Normal;
+        Console.WriteLine("Minimize/render/restore: passed");
+        Close();
+    }
+    protected override void OnRenderFrame(FrameEventArgs args)
+    {
+        if(stage == shots.Length) return;
+        GL.Viewport(0,0,ClientSize.X,ClientSize.Y);
+        GL.ClearColor(.055f,.06f,.062f,1);
+        GL.Clear(ClearBufferMask.ColorBufferBit|ClearBufferMask.DepthBufferBit);
+        if(stage < 4) Call("RenderMenu"); else if(stage==4) DrawTurnaround(); else DrawWorld();
+        GL.Finish();
+        if(++frame >= 4)
+        {
+            var error=GL.GetError();
+            if(error!=ErrorCode.NoError) throw new Exception("GL error: "+error);
+            SavePng(Output+"/"+shots[stage].Name+".png",ClientSize.X,ClientSize.Y);
+            Console.WriteLine("Captured "+shots[stage].Name);
+            frame=0;
+            if(++stage==shots.Length) { WindowState=WindowState.Minimized; return; }
+            Configure();
+        }
+        SwapBuffers();
+    }
+    void DrawWorld()
+    {
+        var city=(CityRenderer)Get("_city");
+        var context=(CityRenderContext)Get("_cityRenderContext");
+        var camera=(Camera)Get("_cam");
+        var view=camera.View;
+        var projection=camera.Proj(ClientSize.X/(float)ClientSize.Y);
+        GL.UseProgram(context.Shader);
+        var lighting = SceneLighting.At(city.TimeOfDay);
+        GL.ClearColor(lighting.Sky.X, lighting.Sky.Y, lighting.Sky.Z, 1);
+        GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
+        GL.Uniform3((int)Get("_ambL"), lighting.Ambient);
+        GL.Uniform3((int)Get("_lightL"), lighting.Sun);
+        city.Render(context,ref view,ref projection,lighting.Sky);
+        Call("RenderHud");
+    }
+    void DrawTurnaround()
+    {
+        var city=(CityRenderer)Get("_city");
+        var hero=city.Player!;
+        var context=(CityRenderContext)Get("_cityRenderContext");
+        var mesh=new CharacterMesh();
+        int vao=GL.GenVertexArray(),vbo=GL.GenBuffer();
+        GL.BindVertexArray(vao);
+        GL.BindBuffer(BufferTarget.ArrayBuffer,vbo);
+        for(int i=0;i<3;i++) {
+            GL.VertexAttribPointer(i,3,VertexAttribPointerType.Float,false,36,i*12);
+            GL.EnableVertexAttribArray(i);
+        }
+        GL.Enable(EnableCap.DepthTest);
+        GL.Enable(EnableCap.CullFace);
+        GL.UseProgram(context.Shader);
+        var view=Matrix4.LookAt(new Vector3(0,1,4),new Vector3(0,1,0),Vector3.UnitY);
+        var projection=Matrix4.CreateOrthographic(3.4f,2.125f,.1f,10);
+        var id=Matrix4.Identity;
+        GL.UniformMatrix4(context.ViewLocation,false,ref view);
+        GL.UniformMatrix4(context.ProjectionLocation,false,ref projection);
+        GL.UniformMatrix4(context.ModelLocation,false,ref id);
+        GL.Uniform3(context.ColorLocation,-1f,-1f,-1f);
+        GL.Uniform1(context.FogDensityLocation,0f);
+        GL.Uniform3((int)Get("_ambL"),.62f,.62f,.62f);
+        GL.Uniform3((int)Get("_lightL"),-.5f,.7f,1f);
+        for(int i=0;i<4;i++) {
+            hero.AnimPhase=MathHelper.PiOver2;
+            mesh.Append(hero,0,new Vector3(-1.2f+i*.8f,0,0),
+                i==0?0:i==1?MathHelper.PiOver2:i==2?MathF.PI:-.6f,i==3?1:0);
+        }
+        GL.BufferData(BufferTarget.ArrayBuffer,mesh.FloatCount*sizeof(float),mesh.Data,BufferUsageHint.StreamDraw);
+        GL.DrawArrays(PrimitiveType.Triangles,0,mesh.VertexCount);
+        GL.DeleteBuffer(vbo); GL.DeleteVertexArray(vao);
+    }
+    static void SavePng(string path,int width,int height)
+    {
+        byte[] pixels=new byte[width*height*3];
+        GL.PixelStore(PixelStoreParameter.PackAlignment,1);
+        GL.ReadPixels(0,0,width,height,PixelFormat.Rgb,PixelType.UnsignedByte,pixels);
+        if(path.Contains("menu-") || path.Contains("settings-") || path.Contains("ending-"))
+        {
+            int blue=0,skin=0;
+            int left=(int)(width*.56),right=(int)(width*.94);
+            int top=(int)(height*.24),bottom=(int)(height*.84);
+            for(int y=top;y<bottom;y++)for(int x=left;x<right;x++)
+            {
+                int i=((height-1-y)*width+x)*3;
+                int r=pixels[i],g=pixels[i+1],b=pixels[i+2];
+                bool shirt=b>60 && b>r*1.2 && g>r*1.2;
+                bool face=r>80 && r>g*1.1 && g>b*1.1;
+                if(shirt)blue++;
+                if(face)skin++;
+                if((shirt || face) && (x<left+2 || x>=right-2 || y<top+2 || y>=bottom-2))
+                    throw new Exception("Character touches preview crop boundary");
+            }
+            if(blue<100 || skin<20)throw new Exception("Character preview pixels are missing");
+            Console.WriteLine("Preview pixels: shirt="+blue+", skin="+skin+", bounds passed");
+        }
+        using var output=File.Create(path);
+        output.Write(new byte[]{137,80,78,71,13,10,26,10});
+        byte[] header=new byte[13];
+        BigEndian(header,0,(uint)width); BigEndian(header,4,(uint)height);
+        header[8]=8;header[9]=2;
+        Chunk(output,"IHDR",header);
+        using var memory=new MemoryStream();
+        using(var zip=new ZLibStream(memory,CompressionLevel.Fastest,true)) {
+            for(int y=height-1;y>=0;y--) {
+                zip.WriteByte(0);zip.Write(pixels,y*width*3,width*3);
+            }
+        }
+        Chunk(output,"IDAT",memory.ToArray());Chunk(output,"IEND",Array.Empty<byte>());
+    }
+    static void BigEndian(byte[] data,int i,uint value) {
+        data[i]=(byte)(value>>24);data[i+1]=(byte)(value>>16);
+        data[i+2]=(byte)(value>>8);data[i+3]=(byte)value;
+    }
+    static void Chunk(Stream output,string type,byte[] data) {
+        byte[] name=Encoding.ASCII.GetBytes(type),number=new byte[4];
+        BigEndian(number,0,(uint)data.Length);output.Write(number);output.Write(name);output.Write(data);
+        uint crc=uint.MaxValue;
+        void Update(byte b) {
+            crc^=b;
+            for(int j=0;j<8;j++)crc=(crc>>1)^((crc&1)!=0?0xedb88320u:0u);
+        }
+        foreach(byte b in name)Update(b);foreach(byte b in data)Update(b);
+        BigEndian(number,0,~crc);output.Write(number);
+    }
+}

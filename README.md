@@ -1,83 +1,95 @@
-# Awakening — Voxel PixelArt Engine
+# Пробуждение
 
-A voxel world engine written in C# (.NET) with OpenGL 3.3 Core rendering.
-Each block face is an 8×8 pixel grid (64 colored pixels per face) — no textures, pure geometry with color.
+**Город забывает. Люди могут помнить.**
 
-> Inspired by Minecraft-style voxel worlds with a unique pixel-art aesthetic.
+Игра от третьего лица о работнике городской службы, который замечает повторение
+одного дня и учится менять чужие жизни собственными решениями.
 
-## Features
+Статус: **технический alpha-прототип** на C# / OpenTK. Новая история с общими
+воспоминаниями описана в концепции, но ещё не реализована. Онлайн-сервера нет.
 
-- **Voxel world** with procedural generation via Perlin noise
-- **PixelArt faces** — each block face is an 8×8 RGB pixel grid
-- **Chunk system** — 16×64×16 blocks per chunk, dirty-flag mesh rebuild
-- **Block interaction** — place (RMB) and destroy (LMB) blocks, raycast up to 8 blocks
-- **Directional lighting** + ambient, day/night cycle
-- **FreeCity module** — city generator with NPC characters, hero progress, save system
-- **Runtime profiler** — built-in performance profiling (`RuntimeProfile.cs`)
-- **Functional tests** — `FunctionalTests.cs` inside `src/FreeCity/`
+![Город и герой в текущей сборке](docs/images/city-day.png)
 
-## Block Types
+## Направление
 
-`Air`, `Grass`, `Dirt`, `Stone`, `Wood`, `Leaves`, `Sand`, `Planks`, `Bricks`, `Water`, `Glass`
+После ночной Сверки город возвращается к расписанию. Герой может сохранить
+событие, если другой человек добровольно станет его свидетелем. Так появляются
+якоря памяти, отношения и последствия, переживающие утро.
 
-## Controls
+- [Оригинальная концепция и первый район](docs/CONCEPT.md)
+- [Roadmap с этапами и критериями готовности](ROADMAP.md)
+- [Вдохновение: Free Guy, темы и отличия](docs/INSPIRATION.md)
+- [Художественное направление](docs/ART_DIRECTION.md)
+- [Архитектура и технические ограничения](SPECIFICATION.md)
+- [Результаты проверок и воспроизведение](docs/VALIDATION.md)
 
-| Key | Action |
-|-----|--------|
-| `WASD` | Move |
-| `Space` | Up |
-| `Ctrl` | Down |
-| `Shift` | Sprint |
-| `Mouse` | Look around |
-| `LMB` | Destroy block |
-| `RMB` | Place block |
+## Что есть в прототипе
 
-## Project Structure
+- Процедурный город из 21x21 квартала и 50 жителей с распорядками.
+- Общая человеческая 3D-модель в городе и меню, лицо, одежда, анимация конечностей.
+- Отдалённые персонажи рисуются с меньшей детализацией; герой остаётся подробным.
+- Фасады с окнами и входами, дороги с разметкой, объёмные деревья и скамьи.
+- Освещение дня/ночи, светящиеся окна, атмосферная дымка и сглаживание MSAA 4x.
+- Камера от третьего лица, осмотр героя, меню паузы и настройки.
+- Диалоги, качества, находки и маркеры интереса.
+- Сохранение основных качеств и части состояния жителей.
+- Пассивная прибавка качеств при загрузке для осознания от 70%, до 12 часов.
+- Автоматические проверки логики, снимки настоящего OpenGL-окна и профилировщик.
 
-```
-src/
-├── Game.cs              — main loop, render
-├── Camera.cs            — camera
-├── Input.cs             — input handler
-├── UiRenderer.cs        — UI rendering
-├── RuntimeProfile.cs    — performance profiling
-├── Player/              — player logic
-└── FreeCity/
-    ├── CityGenerator.cs   — procedural city generation
-    ├── CityRenderer.cs    — city rendering
-    ├── NpcCharacter.cs    — NPC AI and behavior
-    ├── HeroProgress.cs    — hero progression system
-    ├── HeroStyle.cs       — hero appearance
-    ├── SaveSystem.cs      — save/load
-    ├── Awareness.cs       — awareness system
-    ├── InterestMarker.cs  — points of interest
-    └── FunctionalTests.cs — functional tests
-```
+## Что ещё не готово
 
-## Requirements
+Якоря памяти, три сюжетных утра, выбранные занятия в отсутствие игрока, полная
+устойчивость сохранений, постоянное пробуждение жителей и совместная игра.
+Текущая развязка при 100% осознания - временная механика. Автоматический рост
+осознания и неполная память NPC мешают задуманному циклу и стоят первыми в M1.
 
-- [.NET 8+](https://dotnet.microsoft.com/download)
-- OpenGL 3.3 compatible GPU
-- Windows (build scripts: `build.bat`, `build_and_run.ps1`)
+![Меню и общий 3D-портрет героя](docs/images/menu.png)
 
-## Build & Run
+## Управление
 
-### Windows (PowerShell)
+| Клавиша | Действие |
+|---|---|
+| WASD | Движение |
+| Shift | Бег |
+| Мышь | Поворот камеры |
+| Колесо или J/K | Приблизить/отдалить камеру |
+| C | Вернуть камеру за спину героя |
+| E | Контекстное взаимодействие: разговор, вход, выход |
+| ЛКМ | Текущая реакция героя; это пока не замена взаимодействию E |
+| Стрелки, Enter | Выбор реплики или пункта меню |
+| Esc | Закрыть диалог / открыть меню паузы |
+
+В меню можно выбирать пункты мышью. Зажмите ЛКМ на портрете, чтобы повернуть
+героя. Влево/вправо поворачивают портрет, кроме настроек, где меняют значение.
+Поддержка геймпада есть в коде; физический контроллер в этой проверке не использовался.
+
+## Сборка и запуск
+
+Windows 10+, .NET 8 SDK, видеокарта с OpenGL 3.3 Core.
+
 ```powershell
-.\build_and_run.ps1
+dotnet restore Probuzhdenie.csproj
+dotnet run --project Probuzhdenie.csproj -c Release
 ```
 
-### Windows (CMD)
-```bat
-build.bat
+Или запустите `build_and_run.ps1`. Пользовательское сохранение лежит в
+`%APPDATA%/Probuzhdenie/save.json`, настройки в
+`%LOCALAPPDATA%/Probuzhdenie/settings.json`. Они не публикуются в репозитории.
+
+## Проверка
+
+```powershell
+dotnet run --project Probuzhdenie.csproj -c Release -- --self-test
+dotnet run --project Probuzhdenie.csproj -c Release -- --functional-test
+dotnet run --project tests/GraphicsSmoke/GraphicsSmoke.csproj -c Release
+dotnet run --project Probuzhdenie.csproj -c Release -- --runtime-profile --profile-seconds=120
 ```
 
-### Manual
-```bash
-dotnet build Probuzhdenie.csproj
-dotnet run
-```
+Графические тесты и профиль открывают окно. Запускайте их по очереди из корня
+репозитория. Профиль использует отдельный тестовый мир и не читает/не перезаписывает
+игровое сохранение. Собственные GPU-буферы в JSON не равны полной видеопамяти драйвера.
 
-## License
+## Лицензия
 
-MIT — see [LICENSE](LICENSE) for details.
+Исходный код: [MIT](LICENSE). Проект не связан с правообладателями Free Guy.
+Ресурсы фильма не включены; опубликованные изображения сняты из нашей игры.

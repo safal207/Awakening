@@ -93,7 +93,8 @@ public sealed class RuntimeProfiler
     }
 
     public bool IsComplete => _completed;
-    public bool ShouldComplete => !_completed && _elapsedSeconds >= _options.DurationSeconds;
+    public bool TimedOut => !_completed && _clock.Elapsed.TotalSeconds >= _options.DurationSeconds + 15;
+    public bool ShouldComplete => !_completed && (_elapsedSeconds >= _options.DurationSeconds || TimedOut);
 
     public void Start(RuntimeProfileGlInfo glInfo)
     {

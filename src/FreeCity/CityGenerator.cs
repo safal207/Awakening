@@ -37,12 +37,19 @@ public static class CityGenerator
 
     private static readonly Vector3[] AccentColors =
     {
-        new(0.9f, 0.3f, 0.3f),
-        new(0.3f, 0.6f, 0.9f),
-        new(0.9f, 0.8f, 0.2f),
-        new(0.2f, 0.8f, 0.3f),
-        new(1f, 0.5f, 0f),
-        new(0.7f, 0.3f, 0.8f),
+        new(0.68f, 0.28f, 0.28f),
+        new(0.28f, 0.45f, 0.57f),
+        new(0.78f, 0.62f, 0.31f),
+        new(0.29f, 0.48f, 0.38f),
+        new(0.69f, 0.43f, 0.30f),
+        new(0.50f, 0.39f, 0.56f),
+    };
+
+    private static readonly Vector3[] FacadeColors =
+    {
+        new(0.50f,0.61f,0.66f), new(0.76f,0.77f,0.70f),
+        new(0.60f,0.39f,0.36f), new(0.46f,0.60f,0.51f),
+        new(0.56f,0.53f,0.61f), new(0.45f,0.49f,0.51f),
     };
 
     public static List<CityBlock> Generate(int seed)
@@ -126,11 +133,11 @@ public static class CityGenerator
 
     private static Vector3 PickColor(Random rng)
     {
-        return new Vector3(
-            0.3f + (float)rng.NextDouble() * 0.5f,
-            0.3f + (float)rng.NextDouble() * 0.5f,
-            0.3f + (float)rng.NextDouble() * 0.5f
-        );
+        // Preserve the RNG draw count so a visual change does not reshuffle saved cities.
+        int index = (int)(rng.NextDouble() * FacadeColors.Length);
+        float brightness = 0.93f + (float)rng.NextDouble() * 0.12f;
+        float warmth = ((float)rng.NextDouble() - 0.5f) * 0.025f;
+        return FacadeColors[index] * brightness + new Vector3(warmth,0,-warmth);
     }
 
     private static Vector3 PickAccent(Random rng)
