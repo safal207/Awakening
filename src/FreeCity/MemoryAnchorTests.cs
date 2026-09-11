@@ -7,6 +7,7 @@ public static class MemoryAnchorTests
     public static bool Run(out string message)
     {
         var accepted = new MemoryLedger();
+        bool orphanBlocked = !accepted.RegisterAnchor(new MemoryAnchor { EventId = "missing-event" });
         var acceptedEvent = new MemoryEvent
         {
             EventId = "tram-stop-meeting-day1",
@@ -84,7 +85,7 @@ public static class MemoryAnchorTests
         });
         bool outsiderPersisted = outsider.ResolveForSverka("outsider-witness", 0, out string outsiderReason);
 
-        bool ok = firstEvent && !duplicateEvent && firstAnchor && persisted &&
+        bool ok = orphanBlocked && firstEvent && !duplicateEvent && firstAnchor && persisted &&
                   accepted.HasPersisted(acceptedEvent.EventId) &&
                   persistedReason == "event+participant+witness+understanding+consent+trace+choice" &&
                   !refusedPersisted && !refusedReplayPersisted &&
@@ -94,7 +95,7 @@ public static class MemoryAnchorTests
 
         message = ok
             ? "Memory anchor tests passed."
-            : $"Memory anchor tests failed: accepted={persisted} ({persistedReason}), refused={refusedPersisted}/{refusedReplayPersisted} ({refusedReason}/{refusedReplayReason}), outsider={outsiderPersisted} ({outsiderReason}).";
+            : $"Memory anchor tests failed: orphanBlocked={orphanBlocked}, accepted={persisted} ({persistedReason}), refused={refusedPersisted}/{refusedReplayPersisted} ({refusedReason}/{refusedReplayReason}), outsider={outsiderPersisted} ({outsiderReason}).";
         return ok;
     }
 }
