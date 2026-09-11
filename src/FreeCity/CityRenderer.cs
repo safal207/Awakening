@@ -1,4 +1,5 @@
 using System;
+using System.Buffers;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using OpenTK.Graphics.OpenGL4;
@@ -14,7 +15,13 @@ public readonly record struct CityRenderContext(
     int ColorLocation,
     int FogColorLocation,
     int FogDensityLocation = -1,
-    int AmbientLocation = -1);
+    int AmbientLocation = -1,
+    int MaterialLocation = -1,
+    int WorldPassLocation = -1,
+    int LightMatrixLocation = -1,
+    int ShadowStrengthLocation = -1,
+    int EyeLocation = -1,
+    int DaylightLocation = -1);
 
 public class CityRenderer : IDisposable
 {
@@ -29,8 +36,15 @@ public class CityRenderer : IDisposable
     private int _highlightVao, _highlightVbo;
     private int _roadGpuBytes, _sidewalkGpuBytes, _buildingGpuBytes, _windowGpuBytes, _highlightGpuBytes;
     private int _sceneryVao, _sceneryVbo, _sceneryCount, _sceneryGpuBytes;
+    private int _facadeVao, _facadeVbo, _facadeCount, _facadeGpuBytes;
+    private int _glassVao, _glassVbo, _glassCount, _glassGpuBytes;
+    private readonly List<SceneRange> _facadeRanges = new(), _buildingRanges = new(), _windowRanges = new(),
+        _glassRanges = new(), _sceneryRanges = new();
+    private readonly SceneMaterials _materials = new();
+    private readonly SunShadowMap _shadows = new();
     private readonly CharacterMesh _characterMesh = new();
     public Vector3? CharacterViewPosition { get; set; }
+    public bool ShadowsEnabled { get; set; } = true;
     private int _npcGpuCapacityBytes;
 
     private readonly List<NpcCharacter> _npcs = new();
@@ -118,7 +132,7 @@ public class CityRenderer : IDisposable
         _insideBlock = null;
         _inside = false;
         DeleteMesh(ref _interiorVao, ref _interiorVbo, ref _interiorCount, ref _interiorGpuBytes);
-        return new Vector3(doorX, 0, doorZ + 2f);
+        return new Vector3(doorX, CityGenerator.GroundHeight(doorX, doorZ + 2f), doorZ + 2f);
     }
 
     public bool IsNearDoor(Vector3 pos, float maxDist)
@@ -288,6 +302,7 @@ public class CityRenderer : IDisposable
             else if (min == dTop) pos.Z = bz1;
             else pos.Z = bz2;
         }
+        pos.Y = CityGenerator.GroundHeight(pos.X, pos.Z);
         return pos;
     }
 
@@ -453,7 +468,9 @@ public class CityRenderer : IDisposable
         _npcGpuCapacityBytes +
         _highlightGpuBytes +
         _interiorGpuBytes +
-        _sceneryGpuBytes;
+        _sceneryGpuBytes + _facadeGpuBytes + _glassGpuBytes;
+
+    public long EstimatedGpuTextureBytes => _materials.TextureBytes + _shadows.TextureBytes;
 
     public IReadOnlyList<NpcCharacter> Npcs => _npcs;
     public int NpcCount => _npcs.Count;
@@ -476,6 +493,7 @@ public class CityRenderer : IDisposable
                 block.Z + buildingInset,
                 block.X + block.Width - buildingInset,
                 block.Z + block.Depth - buildingInset));
+            _buildingBounds.Add(CityStreetProps.ParkedCarBounds(block));
         }
         BuildInterestMarkers();
         SpawnNpcs(seed);
@@ -490,11 +508,14 @@ public class CityRenderer : IDisposable
             float hz = (float)(rng.NextDouble() - 0.5) * 180f;
             float wx = (float)(rng.NextDouble() - 0.5) * 180f;
             float wz = (float)(rng.NextDouble() - 0.5) * 180f;
-            _npcs.Add(new NpcCharacter(new Vector3(hx, 0, hz), new Vector3(wx, 0, wz), seed + i * 397));
+            _npcs.Add(new NpcCharacter(ClampToWalkable(new Vector3(hx, 0, hz),0.3f),
+                ClampToWalkable(new Vector3(wx, 0, wz),0.3f), seed + i * 397));
         }
 
         _player = _npcs[0];
         HeroStyle.ApplyTo(_player);
+        _player.Position = new Vector3(11.5f,0.12f,5);
+        _player.Rotation = _player.TargetRotation = 0;
     }
 
     private void PushCharactersApart()
@@ -610,12 +631,19 @@ public class CityRenderer : IDisposable
     {
         var v = new List<float>();
         var wv = new List<float>();
+        var fv = new List<float>();
+        var gv = new List<float>();
+        _facadeRanges.Clear(); _buildingRanges.Clear(); _windowRanges.Clear(); _glassRanges.Clear();
         foreach (var b in _blocks)
         {
             if (b.Type is BuildingType.Tree or BuildingType.Lamp) continue;
             float x = b.X + 0.5f, z = b.Z + 0.5f;
             float w = b.Width - 1, d = b.Depth - 1, h = b.Height * 2.5f;
-            SceneGeometry.Box(v, new(x,0,z),new(w,h,d),b.Color);
+            int first = v.Count/9, windowFirst = wv.Count/9, facadeFirst = fv.Count/9, glassFirst = gv.Count/9;
+            bool stone = b.Type is BuildingType.Office or BuildingType.Bank or BuildingType.Police;
+            Vector3 wall = stone ? b.Color*0.5f+new Vector3(0.36f,0.37f,0.36f) :
+                Vector3.Lerp(new(0.86f,0.79f,0.73f),new(1.15f,1.11f,1.03f),b.Color.X);
+            SceneGeometry.Box(fv, new(x,0,z),new(w,h,d),wall);
             SceneGeometry.Box(v, new(x-0.012f,0,z-0.012f),new(w+0.024f,0.28f,d+0.024f),b.Color*0.67f);
             SceneGeometry.Box(v, new(x-0.08f,h-0.18f,z-0.08f),new(w+0.16f,0.20f,d+0.16f),b.Accent*0.75f);
             SceneGeometry.Ground(v,x-0.1f,z-0.1f,w+0.2f,d+0.2f,h+0.03f,new(0.29f,0.33f,0.34f));
@@ -640,7 +668,7 @@ public class CityRenderer : IDisposable
                         bool lit = rng.NextDouble() < 0.42;
                         FaceRect(v,at-horizontal*0.08f-Vector3.UnitY*0.08f+normal*0.014f,horizontal,width+0.16f,1.51f,frame);
                         Vector3 glass = Vector3.Lerp(new(0.27f,0.43f,0.51f),new(0.46f,0.65f,0.69f),(floor%3)/2f);
-                        FaceRect(v,at+normal*0.021f,horizontal,width,1.35f,glass);
+                        FaceRect(gv,at+normal*0.021f,horizontal,width,1.35f,glass);
                         FaceRect(v,at+normal*0.034f+horizontal*width*0.48f,horizontal,0.045f,1.35f,trim*0.8f);
                         FaceRect(v,at+normal*0.035f+Vector3.UnitY*0.64f,horizontal,width,0.045f,trim*0.8f);
                         FaceRect(v,at-horizontal*0.12f+normal*0.045f-Vector3.UnitY*0.13f,horizontal,width+0.24f,0.10f,trim);
@@ -658,7 +686,16 @@ public class CityRenderer : IDisposable
                     SceneGeometry.Box(v,new(doorX-1.5f+stripe*0.5f,2.4f,z+d),new(0.5f,0.16f,0.8f),
                         stripe%2==0?b.Accent:new Vector3(0.85f,0.84f,0.74f));
             }
+            CityFacadeDetails.Append(v,b);
+            Vector3 center = new(x+w/2,h/2,z+d/2);
+            float radius = MathF.Sqrt(w*w+d*d+h*h)*0.5f+3;
+            _facadeRanges.Add(new(facadeFirst,fv.Count/9-facadeFirst,center,radius,stone?6:1));
+            _buildingRanges.Add(new(first,v.Count/9-first,center,radius));
+            _windowRanges.Add(new(windowFirst,wv.Count/9-windowFirst,center,radius));
+            _glassRanges.Add(new(glassFirst,gv.Count/9-glassFirst,center,radius));
         }
+        Upload(ref _facadeVao,ref _facadeVbo,ref _facadeCount,ref _facadeGpuBytes,fv);
+        Upload(ref _glassVao,ref _glassVbo,ref _glassCount,ref _glassGpuBytes,gv);
         Upload(ref _buildingVao,ref _buildingVbo,ref _buildingCount,ref _buildingGpuBytes,v);
         Upload(ref _windowVao,ref _windowVbo,ref _windowCount,ref _windowGpuBytes,wv);
     }
@@ -672,10 +709,20 @@ public class CityRenderer : IDisposable
     private void BuildTrees()
     {
         var v = new List<float>();
+        _sceneryRanges.Clear();
         foreach (var block in _blocks)
         {
-            if (block.Type is not (BuildingType.Tree or BuildingType.Lamp)) continue;
+            int first = v.Count/9;
+            CityStreetProps.Append(v,block);
+            if (block.Type is not (BuildingType.Tree or BuildingType.Lamp))
+            {
+                AddTree(block.X-1.6f,block.Z+4,0.85f);
+                _sceneryRanges.Add(new(first,v.Count/9-first,new(block.X+8,3,block.Z+5),17));
+                continue;
+            }
             float x = block.X, z = block.Z;
+            SceneGeometry.Ground(v,x+1,z+1,block.Width-2,block.Depth-2,0.126f,new(0.26f,0.40f,0.27f));
+            SceneGeometry.Ground(v,x+4.1f,z,1.8f,block.Depth,0.13f,new(0.61f,0.63f,0.61f));
             if (block.Type == BuildingType.Tree)
             {
                 AddTree(x + 2.5f, z + 3, 1f);
@@ -694,14 +741,22 @@ public class CityRenderer : IDisposable
             SceneGeometry.Box(v,new(x+5.5f,0.7f,z+1.9f),new(2,0.45f,0.1f),bench);
             SceneGeometry.Box(v,new(x+5.65f,0,z+1.5f),new(0.12f,0.5f,0.35f),bench*0.6f);
             SceneGeometry.Box(v,new(x+7.2f,0,z+1.5f),new(0.12f,0.5f,0.35f),bench*0.6f);
+            _sceneryRanges.Add(new(first,v.Count/9-first,new(x+8,3,z+5),17));
         }
         Upload(ref _sceneryVao, ref _sceneryVbo, ref _sceneryCount, ref _sceneryGpuBytes, v);
 
         void AddTree(float x, float z, float scale)
         {
-            SceneGeometry.Box(v, new(x-0.14f,0,z-0.14f), new(0.28f,2.3f*scale,0.28f), new(0.31f,0.25f,0.20f));
-            SceneGeometry.Foliage(v,new(x,3.3f*scale,z),new Vector3(1.3f,1.7f,1.2f)*scale,new(0.28f,0.49f,0.33f));
-            SceneGeometry.Foliage(v,new(x-0.65f,2.7f*scale,z+0.3f),new Vector3(0.95f,1.15f,0.95f)*scale,new(0.35f,0.56f,0.36f));
+            Vector3 root=new(x,0.12f,z), bark=new(0.29f,0.25f,0.21f);
+            SceneGeometry.Cylinder(v,root,root+new Vector3(0.12f,3.8f,0)*scale,0.14f*scale,bark);
+            for(int crown=0;crown<7;crown++)
+            {
+                float angle=crown*2.4f, spread=crown==0?0:1.12f;
+                Vector3 at=root+new Vector3(MathF.Cos(angle)*spread,4.15f+(crown%3)*0.46f,MathF.Sin(angle)*spread)*scale;
+                SceneGeometry.Cylinder(v,root+Vector3.UnitY*2.3f*scale,at,0.06f*scale,bark,6);
+                SceneGeometry.Foliage(v,at,new Vector3(1.10f,1.25f,1.08f)*scale,
+                    crown%2==0?new(0.26f,0.40f,0.23f):new(0.35f,0.49f,0.27f));
+            }
         }
     }
 
@@ -899,45 +954,95 @@ public class CityRenderer : IDisposable
 
     public void Render(CityRenderContext context, ref Matrix4 view, ref Matrix4 proj, Vector3 fogCol)
     {
+        SceneLighting lighting = SceneLighting.At(_timeOfDay);
+        float shadowStrength = _inside || !ShadowsEnabled ? 0 : 1-lighting.WindowGlow;
+        Vector3 focus = _player?.Position ?? Vector3.Zero;
+        if (!_inside)
+        {
+            _materials.Load();
+            if (shadowStrength > 0.01f)
+            {
+                _shadows.Begin(focus,lighting.Sun);
+                try
+                {
+                    DrawShadow(_facadeVao,_facadeRanges,focus);
+                    DrawShadow(_buildingVao,_buildingRanges,focus);
+                    DrawShadow(_sceneryVao,_sceneryRanges,focus);
+                    if (_npcCount > 0) { GL.BindVertexArray(_npcVao); GL.DrawArrays(PrimitiveType.Triangles,0,_npcCount); }
+                }
+                finally { _shadows.End(); }
+            }
+            _materials.Bind();
+            _shadows.Bind();
+        }
         GL.UseProgram(context.Shader);
         var id = Matrix4.Identity;
-        GL.UniformMatrix4(context.ViewLocation, false, ref view);
-        GL.UniformMatrix4(context.ProjectionLocation, false, ref proj);
-        GL.UniformMatrix4(context.ModelLocation, false, ref id);
-        GL.Uniform3(context.ColorLocation, -1f, -1f, -1f);
-        GL.Uniform3(context.FogColorLocation, fogCol.X, fogCol.Y, fogCol.Z);
-        GL.Uniform1(context.FogDensityLocation, _inside ? 0f : 0.011f);
-        SceneLighting lighting = SceneLighting.At(_timeOfDay);
-        Vector3 ambient = _inside ? new Vector3(0.74f,0.72f,0.67f) : lighting.Ambient;
-        GL.Uniform3(context.AmbientLocation,ambient);
-
-        if (_inside)
+        var lightMatrix = _shadows.LightMatrix;
+        GL.UniformMatrix4(context.ViewLocation,false,ref view);
+        GL.UniformMatrix4(context.ProjectionLocation,false,ref proj);
+        GL.UniformMatrix4(context.ModelLocation,false,ref id);
+        GL.UniformMatrix4(context.LightMatrixLocation,false,ref lightMatrix);
+        GL.Uniform3(context.ColorLocation,-1f,-1f,-1f);
+        GL.Uniform3(context.FogColorLocation,fogCol);
+        GL.Uniform3(context.EyeLocation,view.Inverted().ExtractTranslation());
+        GL.Uniform1(context.FogDensityLocation,_inside?0f:0.010f);
+        GL.Uniform1(context.ShadowStrengthLocation,shadowStrength);
+        GL.Uniform1(context.DaylightLocation,_inside?1f:1-lighting.WindowGlow);
+        GL.Uniform1(context.WorldPassLocation,1);
+        GL.Uniform3(context.AmbientLocation,_inside?new Vector3(0.74f,0.72f,0.67f):lighting.Ambient);
+        try
         {
-            if (_interiorCount > 0)
+            if (_inside)
             {
-                GL.BindVertexArray(_interiorVao);
-                GL.DrawArrays(PrimitiveType.Triangles, 0, _interiorCount);
+                GL.Uniform1(context.MaterialLocation,0);
+                if (_interiorCount > 0) { GL.BindVertexArray(_interiorVao); GL.DrawArrays(PrimitiveType.Triangles,0,_interiorCount); }
             }
-            if (_npcCount > 0)
+            else
             {
-                GL.BindVertexArray(_npcVao);
-                GL.DrawArrays(PrimitiveType.Triangles, 0, _npcCount);
+                GL.Uniform1(context.MaterialLocation,2);
+                GL.BindVertexArray(_roadVao); GL.DrawArrays(PrimitiveType.Triangles,0,_roadCount);
+                GL.Uniform1(context.MaterialLocation,3);
+                GL.BindVertexArray(_sidewalkVao); GL.DrawArrays(PrimitiveType.Triangles,0,_sidewalkCount);
+                DrawVisible(_facadeVao,_facadeRanges,view,proj,context.MaterialLocation);
+                GL.Uniform1(context.MaterialLocation,0);
+                DrawVisible(_buildingVao,_buildingRanges,view,proj);
+                GL.Uniform1(context.MaterialLocation,4);
+                DrawVisible(_glassVao,_glassRanges,view,proj);
+                if (lighting.WindowGlow > 0.01f)
+                {
+                    GL.Uniform1(context.MaterialLocation,7);
+                    DrawVisible(_windowVao,_windowRanges,view,proj);
+                }
+                GL.Uniform1(context.MaterialLocation,0);
+                DrawVisible(_sceneryVao,_sceneryRanges,view,proj);
             }
-            return;
+            GL.Uniform1(context.MaterialLocation,0);
+            if (_npcCount > 0) { GL.BindVertexArray(_npcVao); GL.DrawArrays(PrimitiveType.Triangles,0,_npcCount); }
         }
-
-        GL.BindVertexArray(_roadVao); GL.DrawArrays(PrimitiveType.Triangles, 0, _roadCount);
-        GL.BindVertexArray(_sidewalkVao); GL.DrawArrays(PrimitiveType.Triangles, 0, _sidewalkCount);
-        GL.BindVertexArray(_buildingVao); GL.DrawArrays(PrimitiveType.Triangles, 0, _buildingCount);
-        if (_windowCount > 0 && lighting.WindowGlow > 0.01f)
+        finally
         {
-            GL.Uniform3(context.AmbientLocation,new Vector3(0.35f+lighting.WindowGlow*0.65f));
-            GL.BindVertexArray(_windowVao);
-            GL.DrawArrays(PrimitiveType.Triangles,0,_windowCount);
-            GL.Uniform3(context.AmbientLocation,ambient);
+            GL.Uniform1(context.WorldPassLocation,0);
+            GL.Uniform1(context.ShadowStrengthLocation,0f);
         }
-        GL.BindVertexArray(_sceneryVao); GL.DrawArrays(PrimitiveType.Triangles, 0, _sceneryCount);
-        GL.BindVertexArray(_npcVao); GL.DrawArrays(PrimitiveType.Triangles, 0, _npcCount);
+    }
+
+    private static void DrawVisible(int vao, List<SceneRange> ranges, in Matrix4 view, in Matrix4 projection, int materialLocation = -1)
+    {
+        GL.BindVertexArray(vao);
+        foreach (var range in ranges)
+        {
+            if (range.Count == 0 || !range.Visible(view,projection)) continue;
+            if (materialLocation >= 0) GL.Uniform1(materialLocation,range.Material);
+            GL.DrawArrays(PrimitiveType.Triangles,range.First,range.Count);
+        }
+    }
+
+    private static void DrawShadow(int vao, List<SceneRange> ranges, Vector3 focus)
+    {
+        GL.BindVertexArray(vao);
+        foreach (var range in ranges)
+            if (range.Count > 0 && range.Near(focus,75))
+                GL.DrawArrays(PrimitiveType.Triangles,range.First,range.Count);
     }
 
     public void RenderHighlight(int shader, int modelL, Vector3 pos)
@@ -985,11 +1090,31 @@ public class CityRenderer : IDisposable
         if (vbo == 0) vbo = GL.GenBuffer();
         GL.BindVertexArray(vao);
         GL.BindBuffer(BufferTarget.ArrayBuffer, vbo);
-        Span<float> span = CollectionsMarshal.AsSpan(verts);
-        gpuBytes = verts.Count * sizeof(float);
-        fixed (float* p = span)
-            GL.BufferData(BufferTarget.ArrayBuffer, gpuBytes, (nint)p, BufferUsageHint.StaticDraw);
-        ConfigureVertexAttributes();
+        ReadOnlySpan<float> source = CollectionsMarshal.AsSpan(verts);
+        gpuBytes = count * PackedSceneVertex.Stride;
+        GL.BufferData(BufferTarget.ArrayBuffer, gpuBytes, IntPtr.Zero, BufferUsageHint.StaticDraw);
+        // Keep the temporary packing buffer bounded even for a city-sized mesh.
+        const int batchSize = 16384;
+        var packed = ArrayPool<PackedSceneVertex>.Shared.Rent(batchSize);
+        try
+        {
+            for (int first = 0; first < count; first += batchSize)
+            {
+                int length = Math.Min(batchSize, count - first);
+                for (int i = 0; i < length; i++)
+                    packed[i] = new PackedSceneVertex(source.Slice((first + i) * FloatsPerVertex, FloatsPerVertex));
+                fixed (PackedSceneVertex* p = packed)
+                    GL.BufferSubData(BufferTarget.ArrayBuffer, (IntPtr)(first * PackedSceneVertex.Stride),
+                        length * PackedSceneVertex.Stride, (nint)p);
+            }
+        }
+        finally { ArrayPool<PackedSceneVertex>.Shared.Return(packed); }
+        GL.VertexAttribPointer(0, 3, VertexAttribPointerType.Float, false, PackedSceneVertex.Stride, 0);
+        GL.EnableVertexAttribArray(0);
+        GL.VertexAttribPointer(1, 3, VertexAttribPointerType.HalfFloat, false, PackedSceneVertex.Stride, 12);
+        GL.EnableVertexAttribArray(1);
+        GL.VertexAttribPointer(2, 3, VertexAttribPointerType.Short, true, PackedSceneVertex.Stride, 20);
+        GL.EnableVertexAttribArray(2);
     }
 
 
@@ -1005,6 +1130,10 @@ public class CityRenderer : IDisposable
 
     public void Dispose()
     {
+        _materials.Dispose();
+        _shadows.Dispose();
+        DeleteMesh(ref _facadeVao, ref _facadeVbo, ref _facadeCount, ref _facadeGpuBytes);
+        DeleteMesh(ref _glassVao, ref _glassVbo, ref _glassCount, ref _glassGpuBytes);
         DeleteMesh(ref _roadVao, ref _roadVbo, ref _roadCount, ref _roadGpuBytes);
         DeleteMesh(ref _sidewalkVao, ref _sidewalkVbo, ref _sidewalkCount, ref _sidewalkGpuBytes);
         DeleteMesh(ref _buildingVao, ref _buildingVbo, ref _buildingCount, ref _buildingGpuBytes);

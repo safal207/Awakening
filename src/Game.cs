@@ -120,7 +120,13 @@ public class Game : GameWindow
         _lightL = GL.GetUniformLocation(_shader, "light");
         _fogColL = GL.GetUniformLocation(_shader, "fogCol");
         _fogDensityL = GL.GetUniformLocation(_shader, "fogDensity");
-        _cityRenderContext = new CityRenderContext(_shader, _modelL, _viewL, _projL, _colorL, _fogColL, _fogDensityL, _ambL);
+        _cityRenderContext = new CityRenderContext(_shader, _modelL, _viewL, _projL, _colorL, _fogColL, _fogDensityL, _ambL,
+            GL.GetUniformLocation(_shader,"materialMode"), GL.GetUniformLocation(_shader,"worldPass"),
+            GL.GetUniformLocation(_shader,"lightMatrix"), GL.GetUniformLocation(_shader,"shadowStrength"),
+            GL.GetUniformLocation(_shader,"eyePosition"),GL.GetUniformLocation(_shader,"daylight"));
+        GL.UseProgram(_shader);
+        GL.Uniform1(GL.GetUniformLocation(_shader,"brickTexture"),0);
+        GL.Uniform1(GL.GetUniformLocation(_shader,"sunDepth"),1);
 
 
         int seed;
@@ -149,6 +155,7 @@ public class Game : GameWindow
         }
 
         _city = new CityRenderer(seed, progress);
+        _city.ShadowsEnabled = _profileOptions != null || _settings.Shadows;
         _city.BuildGeometry();
         _city.TimeOfDay = timeOfDay;
         _city.Awareness.Restore(awareness);
@@ -408,6 +415,7 @@ public class Game : GameWindow
             $"ПОЛНЫЙ ЭКРАН  {OnOff(_settings.Fullscreen)}",
             $"ВЕРТИКАЛЬНАЯ СИНХР.  {OnOff(_settings.VSync)}",
             $"ЧУВСТВИТЕЛЬНОСТЬ  {(int)(_settings.MouseSensitivity * 100f)}%",
+            $"СОЛНЕЧНЫЕ ТЕНИ  {OnOff(_settings.Shadows)}",
             "НАЗАД",
         },
         _ => Array.Empty<string>(),
@@ -417,7 +425,7 @@ public class Game : GameWindow
     {
         if (_screen == GameScreen.Settings)
         {
-            if (_menuIndex == 4)
+            if (_menuIndex == 5)
                 CloseSettings();
             else
                 ChangeSetting(1);
@@ -497,6 +505,10 @@ public class Game : GameWindow
             case 3:
                 _settings.MouseSensitivity += Math.Sign(direction) * 0.1f;
                 _settings.MouseSensitivity = Math.Clamp(_settings.MouseSensitivity, 0.5f, 2f);
+                break;
+            case 4:
+                _settings.Shadows = !_settings.Shadows;
+                if (_city != null) _city.ShadowsEnabled = _settings.Shadows;
                 break;
         }
 
@@ -1061,22 +1073,8 @@ public class Game : GameWindow
 
     private static int MakeShader()
     {
-        string vs = @"#version 330 core
-layout(location=0)in vec3 p;layout(location=1)in vec3 c;layout(location=2)in vec3 n;
-uniform mat4 model,view,proj;uniform vec3 col,amb,light;
-out vec3 fC;out vec3 fN;out float fDistance;
-void main(){vec4 w=model*vec4(p,1);vec4 eye=view*w;gl_Position=proj*eye;fDistance=max(0,-eye.z);fC=col.r<-0.5?c:col;fN=mat3(model)*n;}";
-        string fs = @"#version 330 core
-in vec3 fC;in vec3 fN;in float fDistance;
-uniform vec3 amb,light,fogCol;uniform float fogDensity;out vec4 o;
-void main(){
-    vec3 n=normalize(fN);float d=max(dot(n,normalize(light)),0);
-    float hemisphere=mix(0.78,1.04,n.y*0.5+0.5);
-    hemisphere=mix(hemisphere,1,step(0.99,min(amb.r,min(amb.g,amb.b))));
-    vec3 shaded=fC*(amb*hemisphere+(1-amb)*d);
-    float fog=1-exp(-pow(fDistance*fogDensity,2));
-    o=vec4(mix(shaded,fogCol,clamp(fog,0,1)),1);
-}";
+        string vs = WorldShader.Vertex;
+        string fs = WorldShader.Fragment;
         int v = CompileShader(ShaderType.VertexShader, vs);
         int f = CompileShader(ShaderType.FragmentShader, fs);
         int p = GL.CreateProgram();
@@ -1185,7 +1183,8 @@ void main(){
             Gen1Collections: GC.CollectionCount(1),
             Gen2Collections: GC.CollectionCount(2),
             NpcCount: _city?.NpcCount ?? 0,
-            TimeOfDay: _city?.TimeOfDay ?? 0f);
+            TimeOfDay: _city?.TimeOfDay ?? 0f,
+            EstimatedGpuTextureBytes: _city?.EstimatedGpuTextureBytes ?? 0);
     }
 
     private static RuntimeProfileGlInfo ReadGlInfo()

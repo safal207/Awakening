@@ -16,6 +16,7 @@ public sealed class GameSettings
     public int Height { get; set; } = 720;
     public bool Fullscreen { get; set; }
     public bool VSync { get; set; } = true;
+    public bool Shadows { get; set; } = true;
     public float MouseSensitivity { get; set; } = 1f;
 
     public static GameSettings Load()

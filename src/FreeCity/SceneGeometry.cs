@@ -43,13 +43,38 @@ internal static class SceneGeometry
             {
                 Vector3 a = Point(i,j), b = Point(i+1,j), c = Point(i+1,j+1), d = Point(i,j+1);
                 Vector3 shade = color * (0.93f + 0.07f * ((i + j) % 3));
-                if (i == 0) Triangle(v, a, c, b, shade);
-                else if (i == rings - 1) Triangle(v, a, d, c, shade);
-                else Quad(v, a, d, c, b, shade);
+                if (i == 0) Smooth(a,c,b,shade);
+                else if (i == rings - 1) Smooth(a,d,c,shade);
+                else { Smooth(a,d,c,shade); Smooth(a,c,b,shade); }
             }
+        void Smooth(Vector3 a, Vector3 b, Vector3 c, Vector3 shade)
+        {
+            Vector3 r2 = radius*radius;
+            Vertex(v,a,shade,((a-center)/r2).Normalized());
+            Vertex(v,b,shade,((b-center)/r2).Normalized());
+            Vertex(v,c,shade,((c-center)/r2).Normalized());
+        }
     }
 
-    private static void Triangle(List<float> v, Vector3 a, Vector3 b, Vector3 c, Vector3 color)
+    internal static void Cylinder(List<float> v, Vector3 start, Vector3 end, float radius, Vector3 color, int segments = 10)
+    {
+        Vector3 axis = end - start;
+        if (axis.LengthSquared < 1e-8f) return;
+        axis.Normalize();
+        Vector3 right = Vector3.Cross(axis, Math.Abs(axis.Y) > 0.9f ? Vector3.UnitX : Vector3.UnitY).Normalized();
+        Vector3 forward = Vector3.Cross(axis, right);
+        for (int i = 0; i < segments; i++)
+        {
+            float a = MathHelper.TwoPi * i / segments, b = MathHelper.TwoPi * (i + 1) / segments;
+            Vector3 ra = radius * (right * MathF.Cos(a) + forward * MathF.Sin(a));
+            Vector3 rb = radius * (right * MathF.Cos(b) + forward * MathF.Sin(b));
+            Quad(v, start + ra, start + rb, end + rb, end + ra, color);
+            Triangle(v, start, start + rb, start + ra, color);
+            Triangle(v, end, end + ra, end + rb, color);
+        }
+    }
+
+    internal static void Triangle(List<float> v, Vector3 a, Vector3 b, Vector3 c, Vector3 color)
     {
         Vector3 normal = Vector3.Cross(b - a, c - a).Normalized();
         Vertex(v, a, color, normal); Vertex(v, b, color, normal); Vertex(v, c, color, normal);

@@ -41,7 +41,7 @@ public readonly record struct CharacterPose(LimbPose LeftLeg, LimbPose RightLeg,
 }
 
 // CPU-only geometry, shared by the city, menu portrait and headless tests.
-public sealed class CharacterMesh
+public sealed partial class CharacterMesh
 {
     public const int FloatsPerVertex = 9;
     private readonly record struct SurfacePoint(Vector3 Position, Vector3 Normal);
@@ -80,6 +80,12 @@ public sealed class CharacterMesh
         float blend = Math.Clamp(movement ?? npc.AnimBlend, 0, 1);
         if (!float.IsFinite(blend)) blend = 0;
         if (!float.IsFinite(time)) time = 0;
+        if (HeroStyle.IsHero(npc))
+        {
+            AppendHero(npc, time, blend);
+            if (showAwareness && npc.State == NpcState.Aware) AwarenessMarker();
+            return;
+        }
         CharacterPose pose = CharacterPose.Create(npc.AnimPhase, blend);
         float breath = MathF.Sin(time * 1.8f) * 0.0015f * (1f - blend);
         Vector3 skin = npc.HeadColor;
@@ -183,13 +189,13 @@ public sealed class CharacterMesh
         }
     }
 
-    private void Ellipsoid(Vector3 center, Vector3 radius, Vector3 color, bool detailed = false)
+    private void Ellipsoid(Vector3 center, Vector3 radius, Vector3 color, bool detailed = false, bool small = false)
     {
         Vector3[] sphere = _detail switch
         {
             CharacterDetail.Reduced => LowSphere,
             CharacterDetail.Silhouette => FarSphere,
-            _ => detailed ? HeadSphere : Sphere,
+            _ => small ? LowSphere : detailed ? HeadSphere : Sphere,
         };
         for (int i = 0; i < sphere.Length; i += 3)
         {

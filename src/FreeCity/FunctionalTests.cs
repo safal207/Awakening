@@ -30,6 +30,8 @@ public static class FunctionalTests
         CheckWallRelease(failures);
         CheckSceneGeometry(failures);
         CheckSceneLighting(failures);
+        CheckStreetLayout(failures);
+        CheckPackedVertex(failures);
 
         if (!SaveSystem.RunSelfTest(out string saveMessage))
             failures.Add(saveMessage);
@@ -42,6 +44,21 @@ public static class FunctionalTests
 
         message = "Functional tests failed: " + string.Join("; ", failures);
         return false;
+    }
+
+    private static void CheckPackedVertex(List<string> failures)
+    {
+        Expect(System.Runtime.CompilerServices.Unsafe.SizeOf<PackedSceneVertex>() == PackedSceneVertex.Stride,
+            "packed vertex stride matches the GPU layout", failures);
+        Expect(System.Runtime.InteropServices.Marshal.OffsetOf<PackedSceneVertex>(nameof(PackedSceneVertex.R)).ToInt32() == 12 &&
+            System.Runtime.InteropServices.Marshal.OffsetOf<PackedSceneVertex>(nameof(PackedSceneVertex.Nx)).ToInt32() == 20,
+            "packed color and normal offsets match GPU attributes", failures);
+        var vertex = new PackedSceneVertex(new float[] { -300.125f, 0.12f, 281.75f, 1.15f, 0.003f, 0.8f, -1, 0.7f, 0 });
+        Expect(vertex.Position == new Vector3(-300.125f, 0.12f, 281.75f), "packing preserves world coordinates", failures);
+        Expect(Math.Abs((float)vertex.R - 1.15f) < 0.001f && Math.Abs((float)vertex.G - 0.003f) < 0.00001f &&
+            Math.Abs((float)vertex.B - 0.8f) < 0.001f, "half colors preserve material tints including values above one", failures);
+        Expect(vertex.Nx == -short.MaxValue && vertex.Nz == 0 && Math.Abs(vertex.Ny / (float)short.MaxValue - 0.7f) < 0.00004f,
+            "packed signed normals retain direction", failures);
     }
 
     private static void CheckSceneGeometry(List<string> failures)
@@ -57,13 +74,40 @@ public static class FunctionalTests
         Expect(vertices.Count > 0, "foliage is not empty", failures);
         CheckOutward(vertices, center, "foliage", failures);
 
-        foreach (var ground in new[] { CityStreets.BuildRoads(), CityStreets.BuildPaving(CityGenerator.Generate(12345)) })
+        vertices.Clear();
+        SceneGeometry.Cylinder(vertices,center-Vector3.UnitY,center+Vector3.UnitY,0.4f,Vector3.One);
+        CheckOutward(vertices,center,"cylinder",failures);
+
+        foreach (var ground in new[] { CityStreets.BuildRoads() })
             for (int i = 0; i < ground.Count; i += 9)
                 if (!Nearly(ground[i + 7], 1f))
                 {
                     failures.Add("street and paving normals must face upward");
                     break;
                 }
+    }
+
+    private static void CheckStreetLayout(List<string> failures)
+    {
+        Expect(CityGenerator.CarriagewayWidth == 12 && CityGenerator.SidewalkW == 3,
+            "street has twelve metre carriageway and three metre sidewalks",failures);
+        Expect(Nearly(CityGenerator.GroundHeight(12,5),0.12f),"sidewalk is raised",failures);
+        Expect(Nearly(CityGenerator.GroundHeight(19,5),0f),"road is at grade",failures);
+        Expect(Nearly(CityGenerator.GroundHeight(-1,5),0.12f),"negative sidewalk coordinates wrap correctly",failures);
+        Expect(Nearly(CityGenerator.GroundHeight(-9,5),0f),"negative road coordinates wrap correctly",failures);
+        var city = new CityRenderer(424242);
+        Expect(city.IsPositionWalkable(city.Player!.Position,0.3f),"hero spawns outside buildings and parked cars",failures);
+        var building = city.Blocks.First(b => b.Type is not (BuildingType.Tree or BuildingType.Lamp));
+        var car = CityStreetProps.ParkedCarBounds(building);
+        Expect(!city.IsPositionWalkable(new Vector3(car.Center.X,0,car.Center.Y),0),"parked car blocks movement",failures);
+        Expect(CityGenerator.WorldToBlock(-0.1f)==-1,"grid indexing handles negative coordinates",failures);
+        var view = Matrix4.Identity;
+        var projection = Matrix4.CreatePerspectiveFieldOfView(MathHelper.DegreesToRadians(70),16f/9f,0.1f,300);
+        Expect(new SceneRange(0,3,new(0,0,-5),1).Visible(view,projection),"visible geometry is retained",failures);
+        Expect(!new SceneRange(0,3,new(0,0,5),1).Visible(view,projection),"geometry behind camera is culled",failures);
+        Expect(!new SceneRange(0,3,new(100,0,-5),1).Visible(view,projection),"offscreen geometry is culled",failures);
+        Expect(new SceneRange(0,3,new(0,0,0),1).Visible(view,projection),"near-plane intersections are retained",failures);
+        Expect(!new SceneRange(0,3,new(0,0,-250),1).Visible(view,projection),"distant geometry is culled",failures);
     }
 
     private static void CheckOutward(List<float> vertices, Vector3 center, string name, List<string> failures)
@@ -231,7 +275,7 @@ public static class FunctionalTests
             Expect(clampedWalkable, "ClampToWalkable pushes position out of building", failures);
         }
 
-        Vector3 onRoad = new(-1f, 0f, 5f);
+        Vector3 onRoad = new(-1f, 0.12f, 5f);
         bool roadWalkable = city.IsPositionWalkable(onRoad, 0f);
         Expect(roadWalkable, "position on road is walkable", failures);
         Vector3 inRoadBuilding = city.ClampToWalkable(onRoad, 0f);
@@ -311,6 +355,11 @@ public static class FunctionalTests
         Expect(settings.Width == 960, "settings enforce minimum width", failures);
         Expect(settings.Height == 2160, "settings enforce maximum height", failures);
         Expect(Nearly(settings.MouseSensitivity, 2f), "settings clamp mouse sensitivity", failures);
+        var legacy = System.Text.Json.JsonSerializer.Deserialize<GameSettings>("{\"Width\":1280}")!;
+        Expect(legacy.Shadows, "old settings enable shadows by default", failures);
+        settings.Shadows = false;
+        var restored = System.Text.Json.JsonSerializer.Deserialize<GameSettings>(System.Text.Json.JsonSerializer.Serialize(settings))!;
+        Expect(!restored.Shadows, "disabled shadows survive settings serialization", failures);
     }
 
     private static void CheckWallRelease(List<string> failures)
@@ -333,6 +382,19 @@ public static class FunctionalTests
 
     private static void CheckCharacterMesh(List<string> failures)
     {
+        foreach (float blend in new[] { 0f, .3f, 1f })
+            for (int i = 0; i < 64; i++)
+            {
+                CharacterPose pose = HeroPose.Create(i * MathHelper.TwoPi / 64, blend);
+                foreach (LimbPose leg in new[] { pose.LeftLeg, pose.RightLeg })
+                {
+                    Expect(Nearly((leg.Joint - leg.Root).Length, HeroPose.LegLength), "hero thigh length stays constant", failures);
+                    Expect(Nearly((leg.Tip - leg.Joint).Length, HeroPose.LegLength), "hero shin length stays constant", failures);
+                    Expect(leg.Tip.Y >= HeroPose.AnkleHeight, "hero feet never penetrate the ground", failures);
+                }
+                Expect(Nearly(Math.Min(pose.LeftLeg.Tip.Y, pose.RightLeg.Tip.Y), HeroPose.AnkleHeight),
+                    "hero gait always has a grounded support foot", failures);
+            }
         for (int i = 0; i < 32; i++)
         {
             CharacterPose pose = CharacterPose.Create(i * MathHelper.TwoPi / 32, 1);
@@ -408,6 +470,34 @@ public static class FunctionalTests
             CharacterMesh.DetailForDistance(400) == CharacterDetail.Reduced &&
             CharacterMesh.DetailForDistance(1600) == CharacterDetail.Silhouette,
             "distance detail selects near, middle and far models", failures);
+
+        bool heroGeometryValid = true;
+        foreach (var detail in new[] { CharacterDetail.Full, CharacterDetail.Reduced, CharacterDetail.Silhouette })
+            for (int frame = 0; frame < 16; frame++)
+            {
+                hero.AnimPhase = frame * MathHelper.TwoPi / 16;
+                mesh.Clear();
+                mesh.Append(hero, 3.6f + frame * .01f, Vector3.Zero, frame * .4f, 1, detail);
+                for (int i = 0; i < mesh.FloatCount; i++) heroGeometryValid &= float.IsFinite(mesh.Data[i]);
+                for (int i = 0; i < mesh.FloatCount; i += 27)
+                {
+                    Vector3 cross = Vector3.Cross(Read(mesh.Data, i + 9) - Read(mesh.Data, i),
+                        Read(mesh.Data, i + 18) - Read(mesh.Data, i));
+                    heroGeometryValid &= cross.LengthSquared > 1e-14f &&
+                        Vector3.Dot(cross, Read(mesh.Data, i + 6) + Read(mesh.Data, i + 15) + Read(mesh.Data, i + 24)) > 0;
+                }
+            }
+        Expect(heroGeometryValid, "hero walking and blinking geometry stays finite and outward at every detail", failures);
+        var bystander = new NpcCharacter(Vector3.Zero, Vector3.Zero, seed: 456) { Id = 91, Name = "Bystander" };
+        mesh.Clear();
+        mesh.Append(bystander, 0);
+        float[] npcBaseline = mesh.Data.Take(mesh.FloatCount).ToArray();
+        mesh.Clear();
+        mesh.Append(hero, 0, detail: CharacterDetail.Silhouette);
+        mesh.Clear();
+        mesh.Append(bystander, 0);
+        Expect(mesh.FloatCount == npcBaseline.Length && mesh.Data.AsSpan(0, mesh.FloatCount).SequenceEqual(npcBaseline),
+            "hero detail does not leak into subsequent NPC geometry", failures);
     }
 
     private static bool SameBlock(CityBlock left, CityBlock right)

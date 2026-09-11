@@ -31,8 +31,10 @@ public struct CityBlock
 public static class CityGenerator
 {
     public const int BlockSize = 10;     // размер квартала
-    public const int RoadWidth = 4;      // ширина дороги
-    public const int SidewalkW = 1;      // ширина тротуара
+    public const int RoadWidth = 18;     // Street corridor, including both sidewalks.
+    public const int SidewalkW = 3;
+    public const int CarriagewayWidth = RoadWidth - SidewalkW * 2;
+    public const int CellSize = BlockSize + RoadWidth;
     public const int CityRadius = 10;    // кварталов в стороны от центра
 
     private static readonly Vector3[] AccentColors =
@@ -146,4 +148,11 @@ public static class CityGenerator
     }
 
     public static int WorldToBlock(float w) => (int)MathF.Floor(w / (BlockSize + RoadWidth));
+
+    public static float GroundHeight(float x, float z)
+    {
+        float Local(float p) => p - MathF.Floor((p + SidewalkW) / CellSize) * CellSize;
+        float lx = Local(x), lz = Local(z);
+        return lx <= BlockSize + SidewalkW && lz <= BlockSize + SidewalkW ? 0.12f : 0f;
+    }
 }
