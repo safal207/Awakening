@@ -19,7 +19,7 @@ public sealed class MemoryLedger
 
     public bool RegisterAnchor(MemoryAnchor anchor)
     {
-        if (string.IsNullOrWhiteSpace(anchor.EventId)) return false;
+        if (string.IsNullOrWhiteSpace(anchor.EventId) || !_events.ContainsKey(anchor.EventId)) return false;
         return _anchors.TryAdd(anchor.EventId, anchor);
     }
 
