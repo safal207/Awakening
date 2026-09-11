@@ -28,7 +28,6 @@ public static class MemoryAnchorTests
                 new() { NpcId = 12, UnderstoodEvent = true, Consented = true, ConsentReason = "Lida chose to remember" },
             },
         };
-
         bool firstEvent = accepted.RegisterEvent(acceptedEvent);
         bool duplicateEvent = accepted.RegisterEvent(acceptedEvent);
         bool firstAnchor = accepted.RegisterAnchor(acceptedAnchor);
@@ -59,6 +58,8 @@ public static class MemoryAnchorTests
         refused.RegisterEvent(refusedEvent);
         refused.RegisterAnchor(refusedAnchor);
         bool refusedPersisted = refused.ResolveForSverka(refusedEvent.EventId, 0, out string refusedReason);
+        refusedAnchor.Witnesses[1].Consented = true;
+        bool refusedReplayPersisted = refused.ResolveForSverka(refusedEvent.EventId, 0, out string refusedReplayReason);
 
         var outsider = new MemoryLedger();
         outsider.RegisterEvent(new MemoryEvent
@@ -86,12 +87,14 @@ public static class MemoryAnchorTests
         bool ok = firstEvent && !duplicateEvent && firstAnchor && persisted &&
                   accepted.HasPersisted(acceptedEvent.EventId) &&
                   persistedReason == "event+participant+witness+understanding+consent+trace+choice" &&
-                  !refusedPersisted && refusedReason == "missing_voluntary_participant_witness" &&
+                  !refusedPersisted && !refusedReplayPersisted &&
+                  refusedReason == "missing_voluntary_participant_witness" &&
+                  refusedReplayReason == refusedReason &&
                   !outsiderPersisted && outsiderReason == "missing_voluntary_participant_witness";
 
         message = ok
             ? "Memory anchor tests passed."
-            : $"Memory anchor tests failed: accepted={persisted} ({persistedReason}), refused={refusedPersisted} ({refusedReason}), outsider={outsiderPersisted} ({outsiderReason}).";
+            : $"Memory anchor tests failed: accepted={persisted} ({persistedReason}), refused={refusedPersisted}/{refusedReplayPersisted} ({refusedReason}/{refusedReplayReason}), outsider={outsiderPersisted} ({outsiderReason}).";
         return ok;
     }
 }
