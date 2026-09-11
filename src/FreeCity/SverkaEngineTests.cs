@@ -16,6 +16,27 @@ public static class SverkaEngineTests
         var repeatedDay1 = SverkaEngine.Run(ledger, heroId: 0, day: 1);
         var day2 = SverkaEngine.Run(ledger, heroId: 0, day: 2);
 
+        MemoryRuntime.Reset();
+        MemoryRuntime.HeroId = 0;
+        AddCase(MemoryRuntime.Current, "runtime-day1", 1, 15, true);
+        var progress = new HeroProgress();
+        progress.AddQualities(memory: 12f, curiosity: 9f, empathy: 7f, agency: 5f, courage: 3f);
+        progress.NewDay();
+        var runtimeReport = MemoryRuntime.LastSverkaReport;
+
+        bool runtimeOk =
+            progress.Day == 2 &&
+            progress.Memory == 12f &&
+            progress.Curiosity == 9f &&
+            progress.Empathy == 7f &&
+            progress.Agency == 5f &&
+            progress.Courage == 3f &&
+            MemoryRuntime.Current.HasPersisted("runtime-day1") &&
+            runtimeReport != null &&
+            runtimeReport.Day == 1 &&
+            runtimeReport.Decisions.Count == 1 &&
+            runtimeReport.PersistedCount == 1;
+
         bool ok =
             day1.Decisions.Count == 2 &&
             day1.PersistedCount == 1 &&
@@ -25,11 +46,14 @@ public static class SverkaEngineTests
             day2.PersistedCount == 1 &&
             ledger.HasPersisted("day1-persist") &&
             !ledger.HasPersisted("day1-refuse") &&
-            ledger.HasPersisted("day2-future");
+            ledger.HasPersisted("day2-future") &&
+            runtimeOk;
+
+        MemoryRuntime.Reset();
 
         message = ok
             ? "Sverka engine tests passed."
-            : $"Sverka engine tests failed: day1={day1.Decisions.Count}/{day1.PersistedCount}/{day1.RejectedCount}, repeat={repeatedDay1.Decisions.Count}, day2={day2.Decisions.Count}/{day2.PersistedCount}.";
+            : $"Sverka engine tests failed: day1={day1.Decisions.Count}/{day1.PersistedCount}/{day1.RejectedCount}, repeat={repeatedDay1.Decisions.Count}, day2={day2.Decisions.Count}/{day2.PersistedCount}, runtime={runtimeOk}.";
         return ok;
     }
 
