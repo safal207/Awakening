@@ -38,6 +38,12 @@ public sealed class MemoryAnchor
         return true;
     }
 
+    public void RestoreDecision(MemoryAnchorStatus status, string reason)
+    {
+        Status = status;
+        DecisionReason = string.IsNullOrWhiteSpace(reason) ? "restored" : reason;
+    }
+
     private bool Reject(string reason)
     {
         Status = MemoryAnchorStatus.Rejected;
