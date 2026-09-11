@@ -22,7 +22,8 @@ public readonly record struct DialogueChoice(
     float CuriosityGain,
     float EmpathyGain,
     float AgencyGain,
-    float CourageGain);
+    float CourageGain,
+    string ActionId = "");
 
 public class NpcCharacter
 {
@@ -127,6 +128,7 @@ public class NpcCharacter
             0.025f + (float)_rng.NextDouble() * 0.05f
         );
         if (HeroStyle.IsHero(this)) HeroStyle.ApplyTo(this);
+        FirstDistrictStory.ApplyIdentity(this);
 
         _shopsAfterWork = _rng.NextDouble() < 0.45;
         _shoppingStart = WorkEnd + 0.2f + (float)_rng.NextDouble() * 1.2f;
@@ -217,6 +219,9 @@ public class NpcCharacter
 
     public (string npcLine, DialogueChoice[] choices) GetDialogueState(float worldAwareness, HeroProgress progress)
     {
+        if (FirstDistrictStory.TryGetDialogue(this, progress, out string storyLine, out DialogueChoice[] storyChoices))
+            return (storyLine, storyChoices);
+
         bool aware = State == NpcState.Aware || worldAwareness >= 85f;
         bool fractured = worldAwareness >= 35f || progress.Memory >= 25f || progress.Curiosity >= 25f;
         float friendliness = Friendliness;
@@ -315,6 +320,7 @@ public class NpcCharacter
         progress.AddQualities(choice.MemoryGain, choice.CuriosityGain, choice.EmpathyGain, choice.AgencyGain, choice.CourageGain);
         if (choice.MemoryGain > 0 || choice.CuriosityGain > 0 || choice.EmpathyGain > 0 || choice.AgencyGain > 0 || choice.CourageGain > 0)
             Awareness = Math.Min(100f, Awareness + 1f);
+        FirstDistrictStory.ApplyChoice(this, choice, progress);
     }
 
     public void Reset()
