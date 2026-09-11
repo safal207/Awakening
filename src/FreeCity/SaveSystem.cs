@@ -53,13 +53,16 @@ public static class SaveSystem
     public static void Save(int seed, HeroProgress progress, AwarenessSystem awareness, float timeOfDay,
         IReadOnlyList<NpcCharacter>? npcs = null, MemoryLedger? memoryLedger = null)
     {
-        SaveToPath(SaveFilePath, seed, progress, awareness, timeOfDay, DateTime.UtcNow, npcs, memoryLedger);
+        SaveToPath(SaveFilePath, seed, progress, awareness, timeOfDay, DateTime.UtcNow, npcs,
+            memoryLedger ?? MemoryRuntime.Current);
     }
 
     public static (int seed, HeroProgress progress, float timeOfDay, float awareness, double offlineMinutes,
         List<NpcSaveData>? npcs, MemoryLedger memoryLedger) Load()
     {
-        return LoadFromPath(SaveFilePath);
+        var loaded = LoadFromPath(SaveFilePath);
+        MemoryRuntime.Replace(loaded.memoryLedger);
+        return loaded;
     }
 
     public static bool RunSelfTest(out string message)
@@ -210,6 +213,10 @@ public static class SaveSystem
 
             return (data.Seed == 0 ? Environment.TickCount : data.Seed, progress, data.TimeOfDay,
                 data.Awareness, offlineMinutes, data.Npcs, ledger);
+        }
+        catch (InvalidDataException)
+        {
+            throw;
         }
         catch (Exception e)
         {
