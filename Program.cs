@@ -13,9 +13,11 @@ if (args.Length > 0 && args[0] == "--functional-test")
 {
     bool functionalOk = FunctionalTests.Run(out string functionalMessage);
     bool memoryOk = MemoryAnchorTests.Run(out string memoryMessage);
+    bool sverkaOk = SverkaEngineTests.Run(out string sverkaMessage);
     Console.WriteLine(functionalMessage);
     Console.WriteLine(memoryMessage);
-    Environment.Exit(functionalOk && memoryOk ? 0 : 1);
+    Console.WriteLine(sverkaMessage);
+    Environment.Exit(functionalOk && memoryOk && sverkaOk ? 0 : 1);
 }
 
 RuntimeProfileOptions? profileOptions = RuntimeProfileOptions.TryParse(args);
