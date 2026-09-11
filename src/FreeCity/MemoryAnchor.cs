@@ -17,6 +17,7 @@ public sealed class MemoryAnchor
 
     public bool Evaluate(MemoryEvent memoryEvent, int heroId)
     {
+        if (Status != MemoryAnchorStatus.Candidate) return PersistedAcrossSverka;
         if (!string.Equals(EventId, memoryEvent.EventId, StringComparison.Ordinal)) return Reject("event_mismatch");
         if (string.IsNullOrWhiteSpace(memoryEvent.Consequence)) return Reject("event_has_no_consequence");
         if (!memoryEvent.HadAlternativeChoice) return Reject("no_meaningful_choice");
