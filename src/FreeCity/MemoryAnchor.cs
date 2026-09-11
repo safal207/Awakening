@@ -4,7 +4,12 @@ using System.Linq;
 
 namespace Probuzhdenie.FreeCity;
 
-public enum MemoryAnchorStatus { Candidate, Persisted, Rejected }
+public enum MemoryAnchorStatus
+{
+    Candidate,
+    Persisted,
+    Rejected,
+}
 
 public sealed class MemoryAnchor
 {
@@ -17,13 +22,17 @@ public sealed class MemoryAnchor
 
     public bool Evaluate(MemoryEvent memoryEvent, int heroId)
     {
-        if (Status != MemoryAnchorStatus.Candidate) return PersistedAcrossSverka;
+        if (Status != MemoryAnchorStatus.Candidate)
+            return PersistedAcrossSverka;
         if (!string.Equals(EventId, memoryEvent.EventId, StringComparison.Ordinal)) return Reject("event_mismatch");
         if (string.IsNullOrWhiteSpace(memoryEvent.Consequence)) return Reject("event_has_no_consequence");
         if (!memoryEvent.HadAlternativeChoice) return Reject("no_meaningful_choice");
         if (string.IsNullOrWhiteSpace(TraceId)) return Reject("missing_trace");
-        bool validWitness = Witnesses.Any(w => w.NpcId != heroId && memoryEvent.ParticipantIds.Contains(w.NpcId) && w.UnderstoodEvent && w.Consented);
+
+        bool validWitness = Witnesses.Any(w =>
+            w.NpcId != heroId && memoryEvent.ParticipantIds.Contains(w.NpcId) && w.UnderstoodEvent && w.Consented);
         if (!validWitness) return Reject("missing_voluntary_participant_witness");
+
         Status = MemoryAnchorStatus.Persisted;
         DecisionReason = "event+participant+witness+understanding+consent+trace+choice";
         return true;
