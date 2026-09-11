@@ -23,5 +23,9 @@ public class Camera
     }
 
     public Matrix4 View => Matrix4.LookAt(Pos, Pos + Front, Up);
-    public Matrix4 Proj(float a) => Matrix4.CreatePerspectiveFieldOfView(MathHelper.DegreesToRadians(70f), a, 0.05f, 300f);
+    public Matrix4 Proj(float aspect)
+    {
+        if (!float.IsFinite(aspect) || aspect <= 0) aspect = 1;
+        return Matrix4.CreatePerspectiveFieldOfView(MathHelper.DegreesToRadians(70f), aspect, 0.05f, 300f);
+    }
 }
