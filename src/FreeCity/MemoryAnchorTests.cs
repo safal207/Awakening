@@ -11,6 +11,7 @@ public static class MemoryAnchorTests
         {
             EventId = "tram-stop-meeting-day1",
             EventType = "shared_meeting",
+            ParticipantIds = new List<int> { 0, 12, 21 },
             LocationId = "tram-stop-4",
             ChoiceId = "delay_tram_for_mark",
             Day = 1,
@@ -23,8 +24,8 @@ public static class MemoryAnchorTests
             TraceId = "dispatcher-note-1",
             Witnesses = new List<MemoryWitness>
             {
-                new() { NpcId = 0, Consented = true },
-                new() { NpcId = 12, Consented = true, ConsentReason = "Lida chose to remember" },
+                new() { NpcId = 0, UnderstoodEvent = true, Consented = true },
+                new() { NpcId = 12, UnderstoodEvent = true, Consented = true, ConsentReason = "Lida chose to remember" },
             },
         };
 
@@ -33,40 +34,64 @@ public static class MemoryAnchorTests
         bool firstAnchor = accepted.RegisterAnchor(acceptedAnchor);
         bool persisted = accepted.ResolveForSverka(acceptedEvent.EventId, 0, out string persistedReason);
 
-        var rejected = new MemoryLedger();
-        var rejectedEvent = new MemoryEvent
+        var refused = new MemoryLedger();
+        var refusedEvent = new MemoryEvent
         {
             EventId = "tram-stop-no-consent-day1",
             EventType = "shared_meeting",
+            ParticipantIds = new List<int> { 0, 12 },
             LocationId = "tram-stop-4",
             ChoiceId = "delay_tram_for_mark",
             Day = 1,
             Consequence = "Lida saw Mark",
             HadAlternativeChoice = true,
         };
-        var rejectedAnchor = new MemoryAnchor
+        var refusedAnchor = new MemoryAnchor
         {
-            EventId = rejectedEvent.EventId,
+            EventId = refusedEvent.EventId,
             TraceId = "dispatcher-note-2",
             Witnesses = new List<MemoryWitness>
             {
-                new() { NpcId = 0, Consented = true },
-                new() { NpcId = 12, Consented = false, ConsentReason = "Lida refused" },
+                new() { NpcId = 0, UnderstoodEvent = true, Consented = true },
+                new() { NpcId = 12, UnderstoodEvent = true, Consented = false, ConsentReason = "Lida refused" },
             },
         };
-        rejected.RegisterEvent(rejectedEvent);
-        rejected.RegisterAnchor(rejectedAnchor);
-        bool rejectedPersisted = rejected.ResolveForSverka(rejectedEvent.EventId, 0, out string rejectedReason);
+        refused.RegisterEvent(refusedEvent);
+        refused.RegisterAnchor(refusedAnchor);
+        bool refusedPersisted = refused.ResolveForSverka(refusedEvent.EventId, 0, out string refusedReason);
+
+        var outsider = new MemoryLedger();
+        outsider.RegisterEvent(new MemoryEvent
+        {
+            EventId = "outsider-witness",
+            EventType = "shared_meeting",
+            ParticipantIds = new List<int> { 0, 12 },
+            LocationId = "tram-stop-4",
+            ChoiceId = "delay_tram_for_mark",
+            Day = 1,
+            Consequence = "Lida met Mark",
+            HadAlternativeChoice = true,
+        });
+        outsider.RegisterAnchor(new MemoryAnchor
+        {
+            EventId = "outsider-witness",
+            TraceId = "outsider-note",
+            Witnesses = new List<MemoryWitness>
+            {
+                new() { NpcId = 99, UnderstoodEvent = true, Consented = true },
+            },
+        });
+        bool outsiderPersisted = outsider.ResolveForSverka("outsider-witness", 0, out string outsiderReason);
 
         bool ok = firstEvent && !duplicateEvent && firstAnchor && persisted &&
                   accepted.HasPersisted(acceptedEvent.EventId) &&
-                  persistedReason == "event+witness+consent+trace+choice" &&
-                  !rejectedPersisted && !rejected.HasPersisted(rejectedEvent.EventId) &&
-                  rejectedReason == "missing_voluntary_witness";
+                  persistedReason == "event+participant+witness+understanding+consent+trace+choice" &&
+                  !refusedPersisted && refusedReason == "missing_voluntary_participant_witness" &&
+                  !outsiderPersisted && outsiderReason == "missing_voluntary_participant_witness";
 
         message = ok
             ? "Memory anchor tests passed."
-            : $"Memory anchor tests failed: accepted={persisted} ({persistedReason}), rejected={rejectedPersisted} ({rejectedReason}), duplicateBlocked={!duplicateEvent}.";
+            : $"Memory anchor tests failed: accepted={persisted} ({persistedReason}), refused={refusedPersisted} ({refusedReason}), outsider={outsiderPersisted} ({outsiderReason}).";
         return ok;
     }
 }
