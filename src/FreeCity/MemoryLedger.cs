@@ -23,6 +23,12 @@ public sealed class MemoryLedger
         return _anchors.TryAdd(anchor.EventId, anchor);
     }
 
+    public MemoryEvent? FindEvent(string eventId) =>
+        _events.TryGetValue(eventId, out var memoryEvent) ? memoryEvent : null;
+
+    public MemoryAnchor? FindAnchor(string eventId) =>
+        _anchors.TryGetValue(eventId, out var anchor) ? anchor : null;
+
     public bool ResolveForSverka(string eventId, int heroId, out string reason)
     {
         reason = "missing_event_or_anchor";
