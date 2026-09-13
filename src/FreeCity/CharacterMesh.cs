@@ -9,14 +9,22 @@ public enum CharacterDetail { Full, Reduced, Silhouette }
 
 public readonly record struct CharacterPose(LimbPose LeftLeg, LimbPose RightLeg, LimbPose LeftArm, LimbPose RightArm)
 {
-    public static CharacterPose Create(float phase, float blend)
+    public static CharacterPose Create(float phase, float blend, float greeting = 0f)
     {
         if (!float.IsFinite(phase)) phase = 0;
         if (!float.IsFinite(blend)) blend = 0;
         blend = Math.Clamp(blend, 0f, 1f);
         float swing = MathF.Sin(phase);
-        return new CharacterPose(Leg(-1, swing, blend), Leg(1, -swing, blend),
-            Arm(-1, -swing, blend), Arm(1, swing, blend));
+        var right = Arm(1, swing, blend);
+        greeting = float.IsFinite(greeting) ? Math.Clamp(greeting, 0, 1) : 0;
+        if (greeting > 0)
+        {
+            Vector3 upper = Vector3.Lerp((right.Joint-right.Root).Normalized(),new Vector3(0.75f,0.4f,0.5f).Normalized(),greeting).Normalized();
+            Vector3 lower = Vector3.Lerp((right.Tip-right.Joint).Normalized(),new Vector3(0.1f,0.95f,0.15f).Normalized(),greeting).Normalized();
+            Vector3 elbow = right.Root + upper * 0.163f;
+            right = new LimbPose(right.Root,elbow,elbow + lower * 0.148f);
+        }
+        return new CharacterPose(Leg(-1, swing, blend), Leg(1, -swing, blend), Arm(-1, -swing, blend), right);
     }
 
     private static LimbPose Leg(float side, float swing, float blend)
@@ -86,7 +94,7 @@ public sealed partial class CharacterMesh
             if (showAwareness && npc.State == NpcState.Aware) AwarenessMarker();
             return;
         }
-        CharacterPose pose = CharacterPose.Create(npc.AnimPhase, blend);
+        CharacterPose pose = CharacterPose.Create(npc.AnimPhase, blend, npc.Greeting);
         float breath = MathF.Sin(time * 1.8f) * 0.0015f * (1f - blend);
         Vector3 skin = npc.HeadColor;
         Vector3 shirt = npc.Color;

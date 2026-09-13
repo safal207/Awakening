@@ -9,7 +9,7 @@ namespace Probuzhdenie.FreeCity;
 
 public static class SaveSystem
 {
-    private const int CurrentSaveVersion = 3;
+    private const int CurrentSaveVersion = 4;
     private static readonly string SaveDirectory = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Probuzhdenie");
     internal static string SaveFilePath { get; set; } = Path.Combine(SaveDirectory, "save.json");
@@ -180,6 +180,8 @@ public static class SaveSystem
                     for (int step = 0; step < 20; step++) { city.AdvanceDayClock(0.1f); city.UpdateDistrict(0.1f); }
                 }
                 var markPosition = city.Npcs[2].Position;
+                if (phase == DistrictPhase.Repaired)
+                    for (int step = 0; step < 45; step++) city.UpdateDistrict(0.1f);
                 SaveToPath(path, city.Seed, city.Progress, city.Awareness, city.TimeOfDay, DateTime.UtcNow, city.Npcs, MemoryRuntime.Current);
                 var loaded = LoadFromPath(path);
                 MemoryRuntime.Replace(loaded.memoryLedger);
@@ -188,6 +190,13 @@ public static class SaveSystem
                 Require(restored.Progress.DistrictEpisode.Phase == phase && restored.Progress.DistrictEpisode.Deadline == episode.Deadline,
                     "unfinished episode and deadline survive load: " + phase);
                 Require(OpenTK.Mathematics.Vector3.Distance(restored.Npcs[2].Position, markPosition) < 0.02f, "Mark route progress survives load");
+                Require(restored.Progress.DistrictEpisode.DepartureSeconds == episode.DepartureSeconds &&
+                    restored.Progress.DistrictEpisode.TramOffset == episode.TramOffset, "departure pose survives file round trip");
+                if (phase == DistrictPhase.Repaired)
+                {
+                    restored.UpdateDistrict(0.1f);
+                    Require(restored.Progress.DistrictEpisode.DepartureSeconds > episode.DepartureSeconds, "loaded tram continues rather than restarting");
+                }
                 if (phase == DistrictPhase.MarkOnWay)
                 {
                     restored.Player!.Position = FirstDistrictEpisode.Stop + new OpenTK.Mathematics.Vector3(0,0,-2);
@@ -274,6 +283,13 @@ public static class SaveSystem
             migrated = LoadFromPath(path);
             Require(migrated.progress.DistrictEpisode.Phase == DistrictPhase.Missed, "legacy later morning has no pending first-day objective");
 
+            foreach (DistrictPhase oldPhase in new[] { DistrictPhase.Repaired, DistrictPhase.Missed, DistrictPhase.WaitingForMark })
+            {
+                File.WriteAllText(path, JsonSerializer.Serialize(new { Version=3, Seed=424242, Day=1,
+                    DistrictEpisode=new { Phase=oldPhase, Deadline=9.8f } }), SaveEncoding);
+                migrated = LoadFromPath(path);
+                Require(migrated.progress.DistrictEpisode.TramGone == (oldPhase != DistrictPhase.WaitingForMark), "v3 does not resurrect departed tram");
+            }
             File.WriteAllText(path, JsonSerializer.Serialize(new { Version = CurrentSaveVersion + 1 }), SaveEncoding);
             bool refusedFutureVersion = false;
             try { LoadFromPath(path); }

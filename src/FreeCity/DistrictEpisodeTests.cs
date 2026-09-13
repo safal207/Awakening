@@ -41,7 +41,7 @@ public static class DistrictEpisodeTests
             float agency = city.Progress.Agency;
             city.InteractWithDistrict(DistrictInteraction.Signal);
             Check(city.Progress.Agency == agency, "no repeated signal reward");
-            Check(!DistrictScene.TramPresent(episode, 1), "repair releases tram");
+            Check(DistrictScene.TramPresent(episode, 1) && episode.TramDeparting && episode.TramOffset == Vector3.Zero, "repair starts departure without popping out");
             city.Player.Position = FirstDistrictEpisode.Rest;
             Check(city.InteractWithDistrict(DistrictInteraction.Rest) && city.Progress.Day == 2 && city.TimeOfDay == 8f, "rest crosses real midnight");
             Check(!city.InteractWithDistrict(DistrictInteraction.Rest), "rest is not repeatable on day two");
@@ -91,6 +91,8 @@ public static class DistrictEpisodeTests
             Check(episode.Phase == DistrictPhase.Met && MemoryRuntime.Current.Anchors.Count == 1, "three people share a real place");
             city.UpdateDistrict(1);
             Check(MemoryRuntime.Current.Events.Count == 1, "single physical event");
+            Check(episode.TramDeparting && city.Npcs[1].Greeting > 0 && city.Npcs[2].Greeting > 0,
+                "meeting releases tram and both participants greet");
             FirstDistrictStory.TryGetDialogue(city.Npcs[2], city.Progress, out _, out choices);
             city.Npcs[2].ApplyChoice(choices[0], city.Progress);
             city.Player.Position = FirstDistrictEpisode.Rest;
@@ -107,8 +109,65 @@ public static class DistrictEpisodeTests
                 Check(Vector3.Distance(city.ClampToWalkable(center,0.3f),center) > 1f, "tram has collision");
                 city.Progress.DistrictEpisode.Plan(false, 1);
                 city.Progress.DistrictEpisode.ActivateSignal(FirstDistrictEpisode.Signal,8,1);
+                for (int i = 3; i < city.Npcs.Count; i++) city.Npcs[i].Position = new Vector3(i,0.12f,40);
+                for (int i = 0; i < 250; i++) city.UpdateDistrict(0.1f);
+                Check(city.Progress.DistrictEpisode.TramGone, "tram departs along authored street");
                 Check(Vector2.Distance(city.ClampToWalkable(center,0.3f).Xz,center.Xz) < 0.02f, "departed tram leaves no invisible collider");
+                for (int x = -155; x <= 9; x++)
+                    Check(Vector2.Distance(city.ClampToWalkable(new Vector3(x,0.12f,17),1.2f).Xz,new Vector2(x,17)) < 0.02f, "tram corridor clear of static obstacles");
             }
+
+            city = Fresh(); episode = city.Progress.DistrictEpisode;
+            for (int i = 3; i < city.Npcs.Count; i++) city.Npcs[i].Position = new Vector3(i,0.12f,40);
+            episode.Plan(false,1); episode.ActivateSignal(FirstDistrictEpisode.Signal,8,1);
+            for (int i = 0; i < 10; i++) city.UpdateDistrict(0.1f);
+            Check(episode.TramOffset == Vector3.Zero && city.Npcs[1].Greeting > 0.5f, "dispatch gesture before motion");
+            float paused = episode.DepartureSeconds;
+            city.UpdateDistrict(0);
+            Check(episode.DepartureSeconds == paused, "zero delta cannot advance departure");
+            for (int i = 0; i < 45; i++) city.UpdateDistrict(0.1f);
+            var shifted = DistrictScene.TramBounds(episode);
+            Check(shifted.Min.X < -10 && Vector2.Distance(city.ClampToWalkable(new Vector3(shifted.Center.X,0.12f,17),0.3f).Xz,shifted.Center) > 1,
+                "tram collider follows visible body");
+            Check(Vector2.Distance(city.ClampToWalkable(new Vector3(4,0.12f,17),0.3f).Xz,new Vector2(4,17)) < 0.02f, "old stop collider released during motion");
+            city.Player!.Position = new Vector3(shifted.Min.X-0.6f,0.12f,17);
+            Vector3 beforeTram = episode.TramOffset, beforePlayer = city.Player.Position;
+            city.UpdateDistrict(0.1f);
+            Check(episode.TramBlocked && episode.TramOffset == beforeTram && city.Player.Position == beforePlayer, "brake for player without pushing or tunnelling");
+            city.UpdateDistrict(0);
+            Check(episode.TramBlocked && episode.TramOffset == beforeTram, "zero delta preserves blocked status");
+            city.Player.Position = FirstDistrictEpisode.Signal;
+            city.Npcs[3].Position = new Vector3(shifted.Min.X-0.6f,0.12f,17);
+            city.UpdateDistrict(0.1f);
+            Check(episode.TramBlocked && episode.TramOffset == beforeTram, "brake for non-player pedestrian");
+            city.Npcs[3].Position = new Vector3(0,0.12f,40);
+            city.UpdateDistrict(0.1f);
+            Check(!episode.TramBlocked && episode.TramOffset.X < beforeTram.X, "resume once tracks clear");
+            long allocated = GC.GetAllocatedBytesForCurrentThread();
+            for (int i = 0; i < 50; i++) city.UpdateDistrict(0.1f);
+            Check(GC.GetAllocatedBytesForCurrentThread() == allocated, "steady departure update allocates no managed memory");
+
+            city = Fresh(); episode = city.Progress.DistrictEpisode;
+            episode.Plan(true,1); episode.ActivateSignal(FirstDistrictEpisode.Signal,8,1);
+            city.Npcs[2].Trust = 10; city.Npcs[2].Friendliness = 20;
+            episode.Invite(city.Npcs[2],1,8);
+            for (int i = 0; i < 30; i++) city.UpdateDistrict(0.1f);
+            float outward = episode.MarkTravel;
+            city.TimeOfDay = episode.Deadline;
+            for (int i = 0; i < 45; i++) city.UpdateDistrict(0.1f);
+            Check(outward > 0.1f && episode.MarkTravel < 0.01f && MemoryRuntime.Current.Events.Count == 0,
+                "missed Mark walks back without a fabricated meeting");
+
+            foreach (float invalid in new[] { float.NaN, float.PositiveInfinity, -2f, -0.5f, FirstDistrictEpisode.DepartureDuration+1 })
+            {
+                bool rejected = false;
+                try { new FirstDistrictEpisode().Restore(new DistrictEpisodeSaveData { Phase=DistrictPhase.Repaired, DepartureSeconds=invalid },new MemoryLedger()); }
+                catch (System.IO.InvalidDataException) { rejected = true; }
+                Check(rejected, "invalid departure time rejected");
+            }
+            var wave = CharacterPose.Create(0,0,1).RightArm;
+            Check(Math.Abs((wave.Joint-wave.Root).Length-0.163f)<0.0001f && Math.Abs((wave.Tip-wave.Joint).Length-0.148f)<0.0001f && wave.Tip.Y>0.95f,
+                "greeting raises hand without stretching bones");
         }
         catch (Exception e) { failures.Add(e.ToString()); }
         finally { MemoryRuntime.Reset(); }

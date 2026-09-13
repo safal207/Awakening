@@ -8,6 +8,7 @@ internal sealed class SunShadowMap : IDisposable
 {
     private const int Resolution = 2048;
     private int _texture, _framebuffer, _program, _matrixLocation, _previousFramebuffer;
+    private int _modelLocation;
     private readonly int[] _viewport = new int[4];
     internal Matrix4 LightMatrix { get; private set; }
     internal long TextureBytes => _texture == 0 ? 0 : Resolution * Resolution * 4L;
@@ -33,7 +34,10 @@ internal sealed class SunShadowMap : IDisposable
         GL.UseProgram(_program);
         var matrix = LightMatrix;
         GL.UniformMatrix4(_matrixLocation, false, ref matrix);
+        SetModel(Matrix4.Identity);
     }
+
+    internal void SetModel(Matrix4 model) => GL.UniformMatrix4(_modelLocation, false, ref model);
 
     internal void End()
     {
@@ -77,13 +81,14 @@ internal sealed class SunShadowMap : IDisposable
         int vertex = 0, fragment = 0;
         try
         {
-            vertex = Compile(ShaderType.VertexShader,"#version 330 core\nlayout(location=0)in vec3 p;uniform mat4 lightMatrix;void main(){gl_Position=lightMatrix*vec4(p,1);}");
+            vertex = Compile(ShaderType.VertexShader,"#version 330 core\nlayout(location=0)in vec3 p;uniform mat4 lightMatrix;uniform mat4 model;void main(){gl_Position=lightMatrix*model*vec4(p,1);}");
             fragment = Compile(ShaderType.FragmentShader,"#version 330 core\nvoid main(){}");
             _program = GL.CreateProgram();
             GL.AttachShader(_program,vertex); GL.AttachShader(_program,fragment); GL.LinkProgram(_program);
             GL.GetProgram(_program,GetProgramParameterName.LinkStatus,out int linked);
             if (linked == 0) throw new InvalidOperationException(GL.GetProgramInfoLog(_program));
             _matrixLocation = GL.GetUniformLocation(_program,"lightMatrix");
+            _modelLocation = GL.GetUniformLocation(_program,"model");
         }
         finally
         {

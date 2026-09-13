@@ -194,6 +194,8 @@ sealed class PlaythroughProbe : Game
             foreach(var k in Wait(10))yield return k;
             yield break;
         }
+        if(resume && route=="repair")
+            Require(City.Progress.DistrictEpisode.DepartureSeconds>2 && !City.Progress.DistrictEpisode.TramGone,"load lost in-flight tram departure");
         foreach(var k in Press(Keys.Enter))yield return k;
         Require(Get("_screen").ToString()=="Playing","menu start failed");
         foreach(var k in Walk(new(11.5f,0.12f,10.8f),"crossing sidewalk"))yield return k;
@@ -211,8 +213,16 @@ sealed class PlaythroughProbe : Game
                 foreach(var k in Speak(2,0))yield return k;
                 Require(City.Progress.DistrictEpisode.Phase==DistrictPhase.MarkOnWay,"Mark did not accept invitation");
             }
+            if(route=="repair")
+            {
+                foreach(var k in Wait(120))yield return k;
+                Require(City.Progress.DistrictEpisode.TramOffset.X<0,"repair did not animate departure");
+            }
             foreach(var k in Press(Keys.Escape))yield return k;
             Require(Get("_screen").ToString()=="PauseMenu","pause/save failed");
+            float departure=City.Progress.DistrictEpisode.DepartureSeconds;
+            foreach(var k in Wait(30))yield return k;
+            Require(City.Progress.DistrictEpisode.DepartureSeconds==departure,"pause advanced tram departure");
             yield break;
         }
         Require(City.Progress.DistrictEpisode.Phase==(route=="repair"?DistrictPhase.Repaired:DistrictPhase.MarkOnWay),"load lost episode state");

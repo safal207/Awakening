@@ -77,6 +77,7 @@ public class NpcCharacter
     // Анимация
     public float AnimPhase;
     public float AnimBlend;
+    public float Greeting;
 
     // Расписание
     public Vector3 HomePos;
@@ -342,6 +343,7 @@ public class NpcCharacter
         _target = HomePos;
         AnimPhase = (float)(_rng.NextDouble() * MathHelper.TwoPi);
         AnimBlend = 0f;
+        Greeting = 0f;
     }
 
     private string Pick(params string[] lines) => lines[_rng.Next(lines.Length)];

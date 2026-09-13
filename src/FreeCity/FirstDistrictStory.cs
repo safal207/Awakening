@@ -89,7 +89,9 @@ public static class FirstDistrictStory
         var episode = progress.DistrictEpisode;
         if (episode.Phase is DistrictPhase.Repaired or DistrictPhase.Missed)
         {
-            line = episode.Phase == DistrictPhase.Repaired ? "Сигнал исправен, рейс ушёл вовремя. Сегодня мы с Марком не встретились." :
+            line = episode.TramBlocked && progress.Day == 1 ? "На путях человек. Я не отпущу рейс, пока он не отойдёт." :
+                episode.Phase == DistrictPhase.Repaired && episode.TramDeparting && progress.Day == 1 ? "Сигнал исправен. Провожу рейс. Спасибо за ремонт." :
+                episode.Phase == DistrictPhase.Repaired ? "Сигнал исправен, рейс ушёл вовремя. Сегодня мы с Марком не встретились." :
                 episode.InvitationWithdrawn ? "Ты решил не приглашать Марка. Тогда я отпускаю рейс." :
                 episode.MarkRefused ? "Марк не захотел прийти. Я уважаю его решение." : "Время вышло. Я отпустила рейс. Марк так и не пришёл.";
             choices = new[] { new DialogueChoice("Понимаю.", 0, 0, 0, 0, 0, 0, 0, RewardId: "district1.lida.outcome") };
@@ -130,7 +132,10 @@ public static class FirstDistrictStory
 
         if (progress.Day == 1 && anchor != null)
         {
-            line = "Марк пришёл. Мы впервые поговорили не по расписанию. Захочет ли он это запомнить?";
+            bool decided = anchor.Witnesses.Exists(w => w.UnderstoodEvent);
+            line = episode.TramBlocked ? "Рейс подождёт, пока путь освободится. Мы уже встретились; этого не отменить." :
+                decided ? "Рейс отправлен. Решение Марка я слышала. Посмотрим, что останется утром." :
+                "Мы успели поговорить. Я отпускаю рейс, а вы спокойно решите, хотите ли сохранить эту встречу.";
             choices = new[]
             {
                 new DialogueChoice("Спасибо. Я поговорю с ним.", 2, 2, 0, 1, 2, 1, 0, RewardId: "district1.lida.delay.thanks"),
@@ -177,7 +182,11 @@ public static class FirstDistrictStory
         if (episode.Phase is DistrictPhase.Repaired or DistrictPhase.Missed)
         {
             line = episode.InvitationWithdrawn ? "Ты решил оставить всё как есть. Я не успел ответить на приглашение." :
-                episode.MarkRefused ? "Я решил остаться. Не хочу, чтобы за меня решали." : "Рейс ушёл. Мы с Лидой сегодня не встретились.";
+                episode.MarkRefused ? "Я решил остаться. Не хочу, чтобы за меня решали." :
+                episode.Phase == DistrictPhase.Missed && episode.MarkTravel > 0.01f && progress.Day == 1 ?
+                "Я опоздал. Вернусь к своему двору. Не будем делать вид, будто встреча была." :
+                episode.TramDeparting && progress.Day == 1 ? "Рейс отправляется. Мы с Лидой сегодня не встретились." :
+                "Рейс ушёл. Мы с Лидой сегодня не встретились.";
             choices = new[] { new DialogueChoice("Я услышал тебя.", 0, 0, 0, 0, 0, 0, 0, RewardId: "district1.mark.no-meeting") };
             return true;
         }

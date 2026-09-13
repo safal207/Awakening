@@ -7,7 +7,7 @@ dotnet run --project tests/GraphicsSmoke/GraphicsSmoke.csproj -c Release
 ```
 
 The test opens the real game window, checks scripted menu clicks and portrait
-rotation, renders eighteen scenes, checks portrait pixels and GL errors, compares
+rotation, renders twenty-four scenes, checks portrait pixels and GL errors, compares
 shadow-enabled/disabled pixels, then minimizes/restores the window.
 Images go to `artifacts/manhattan-refresh`.
 Pass `--hero-qa` to write the same scenes, including the turnaround and face
@@ -15,6 +15,11 @@ close-up, to `artifacts/hero-refinement` without overwriting earlier captures.
 The close-up and turnaround are actual game geometry, not edited concept art.
 It uses the game's profiling sandbox, so it does not load or write player saves.
 The zero-frame `visual-profile.json` is a teardown artifact, NOT a performance result.
+
+Six departure captures cover the parked tram, Lida's dispatch gesture, movement,
+braking for the player, resuming and the cleared stop. Pixel checks compare the
+tram with/without drawing at its projected world position. The probe also checks
+that its VBO and total allocated geometry bytes stay stable during departure.
 
 The `.cs.txt` extension keeps the harness outside the root project's default C#
 glob. This project explicitly compiles it and references the game project.
@@ -31,7 +36,8 @@ The probe supplies scripted keyboard state to the normal game update, player
 controller, interaction detector and menu/dialogue handlers. It walks instead
 of teleporting and does not directly invoke story choices. Both repair and delay
 routes close and recreate the window, reload progress, read the journal and
-advance to the second morning. It also checks new-cycle cancellation, a backup
+advance to the second morning. The repair route pauses and reloads during the
+animated tram departure. It also checks new-cycle cancellation, a backup
 of the previous cycle, failed writes, the failed-close guard, autosave recovery
 after resuming play and deliberate exit without saving.
 
