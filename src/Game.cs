@@ -19,6 +19,8 @@ public class Game : GameWindow
         PauseMenu,
         Settings,
         Ending,
+        NewCycleConfirmation,
+        SaveFailure,
     }
 
     private const string GameTitle = "Пробуждение";
@@ -40,7 +42,12 @@ public class Game : GameWindow
     private readonly RuntimeProfileOptions? _profileOptions;
     private readonly RuntimeProfiler? _runtimeProfiler;
     private readonly GameSettings _settings;
-    private readonly string[] _mainMenuItems = { "НАЧАТЬ", "НАСТРОЙКИ", "ВЫХОД" };
+    private readonly string[] _mainMenuItems = { "ПРОДОЛЖИТЬ", "НОВЫЙ ЦИКЛ", "НАСТРОЙКИ", "ВЫХОД" };
+    private readonly string[] _newCycleItems = { "ОТМЕНА", "НАЧАТЬ ЗАНОВО" };
+    private string _menuError = "";
+    private string _saveWarning = "";
+    private bool _allowUnsavedClose;
+    private readonly string[] _saveFailureItems = { "ПОВТОРИТЬ СОХРАНЕНИЕ", "ВЫЙТИ БЕЗ СОХРАНЕНИЯ", "НАЗАД" };
     private readonly string[] _pauseMenuItems = { "ПРОДОЛЖИТЬ", "НАСТРОЙКИ", "ВЫХОД" };
     private readonly string[] _endingMenuItems = { "ПРОДОЛЖИТЬ ИССЛЕДОВАНИЕ", "ВЫХОД" };
     private readonly (int Width, int Height)[] _resolutions =
@@ -187,6 +194,8 @@ public class Game : GameWindow
 
     }
 
+    protected virtual void PollInput() => _input.Update();
+
     protected override void OnUpdateFrame(FrameEventArgs args)
     {
         base.OnUpdateFrame(args);
@@ -201,7 +210,7 @@ public class Game : GameWindow
             System.Threading.Thread.Sleep(16);
             return;
         }
-        _input.Update();
+        PollInput();
         float dt = Math.Min((float)args.Time, MaxFrameDelta);
 
         if (_screen != GameScreen.Playing)
@@ -301,7 +310,7 @@ public class Game : GameWindow
                     if (_city.InteractWithDistrict(_currentInteraction.DistrictAction))
                     {
                         _playerController?.ResetMotion();
-                        if (_profileOptions == null) _city.SaveGame();
+                        if (_profileOptions == null) SaveCurrentGame();
                     }
                     break;
             }
@@ -310,8 +319,7 @@ public class Game : GameWindow
         _saveTimer += dt;
         if (_profileOptions == null && _saveTimer >= AutoSaveIntervalSeconds)
         {
-            _city?.SaveGame();
-            _saveTimer = 0f;
+            SaveCurrentGame();
         }
 
         // Диалоги NPC
@@ -391,6 +399,8 @@ public class Game : GameWindow
         if (_input.KeyPressed(Keys.Escape) || _input.GpStartPressed || _input.GpBPressed)
         {
             if (_screen == GameScreen.Settings) CloseSettings();
+            else if (_screen == GameScreen.NewCycleConfirmation) { _screen = GameScreen.MainMenu; _menuIndex = 1; }
+            else if (_screen == GameScreen.SaveFailure) { _screen = GameScreen.PauseMenu; _menuIndex = 0; }
             else if (_screen == GameScreen.PauseMenu) ResumeGame();
             else Close();
             return;
@@ -419,6 +429,8 @@ public class Game : GameWindow
         GameScreen.MainMenu => _mainMenuItems,
         GameScreen.PauseMenu => _pauseMenuItems,
         GameScreen.Ending => _endingMenuItems,
+        GameScreen.NewCycleConfirmation => _newCycleItems,
+        GameScreen.SaveFailure => _saveFailureItems,
         GameScreen.Settings => new[]
         {
             $"РАЗРЕШЕНИЕ  {_settings.Width}x{_settings.Height}",
@@ -433,6 +445,19 @@ public class Game : GameWindow
 
     private void SelectMenuItem()
     {
+        if (_screen == GameScreen.SaveFailure)
+        {
+            if (_menuIndex == 0) Close();
+            else if (_menuIndex == 1) { _allowUnsavedClose = true; Close(); }
+            else { _screen = GameScreen.PauseMenu; _menuIndex = 0; }
+            return;
+        }
+        if (_screen == GameScreen.NewCycleConfirmation)
+        {
+            if (_menuIndex == 0) { _screen = GameScreen.MainMenu; _menuIndex = 1; }
+            else StartNewCycle();
+            return;
+        }
         if (_screen == GameScreen.Settings)
         {
             if (_menuIndex == 5)
@@ -459,7 +484,8 @@ public class Game : GameWindow
         if (_screen == GameScreen.MainMenu)
         {
             if (_menuIndex == 0) StartGame();
-            else if (_menuIndex == 1) OpenSettings(GameScreen.MainMenu);
+            else if (_menuIndex == 1) { _screen = GameScreen.NewCycleConfirmation; _menuIndex = 0; _menuError = ""; }
+            else if (_menuIndex == 2) OpenSettings(GameScreen.MainMenu);
             else Close();
             return;
         }
@@ -525,6 +551,52 @@ public class Game : GameWindow
         _settings.Save();
     }
 
+    private void StartNewCycle()
+    {
+        if (_city == null || !_city.SaveGame())
+        {
+            _menuError = "Не удалось сохранить текущий цикл.";
+            return;
+        }
+        if (!SaveSystem.TryBackupForNewCycle(out _menuError)) return;
+
+        var previousLedger = MemoryRuntime.Current;
+        int previousHero = MemoryRuntime.HeroId;
+        CityRenderer? next = null;
+        try
+        {
+            MemoryRuntime.Reset();
+            next = new CityRenderer(Environment.TickCount) { ShadowsEnabled = _settings.Shadows };
+            next.BuildGeometry();
+            next.UpdateNpcs(0);
+            if (!next.SaveGame()) throw new InvalidOperationException("Could not save the new cycle.");
+        }
+        catch (Exception e)
+        {
+            next?.Dispose();
+            MemoryRuntime.Replace(previousLedger);
+            MemoryRuntime.HeroId = previousHero;
+            Console.WriteLine(e);
+            _menuError = "Новый цикл не создан. Прежний прогресс сохранён.";
+            return;
+        }
+
+        _city.Dispose();
+        _city = next;
+        _playerController = new PlayerController(next, _input, _cam);
+        _interactionDetector = new InteractionDetector(next);
+        _dialogueNpc = null;
+        _dialogueChoices = Array.Empty<DialogueChoice>();
+        _currentInteraction = default;
+        _dialogueTimer = _dialogueFeedbackTimer = _saveTimer = 0;
+        _dialogueFeedback = "";
+        _dialogueCameraReturning = _endingAcknowledged = false;
+        _offlineGrowthMinutes = 0;
+        _menuError = "";
+        _saveWarning = "";
+        StartGame();
+    }
+
     private void StartGame()
     {
         _screen = GameScreen.Playing;
@@ -536,7 +608,7 @@ public class Game : GameWindow
 
     private void OpenPauseMenu()
     {
-        _city?.SaveGame();
+        SaveCurrentGame();
         _screen = GameScreen.PauseMenu;
         _menuIndex = 0;
         _captured = false;
@@ -546,7 +618,7 @@ public class Game : GameWindow
 
     private void OpenEnding()
     {
-        _city?.SaveGame();
+        SaveCurrentGame();
         _screen = GameScreen.Ending;
         _menuIndex = 0;
         _captured = false;
@@ -778,11 +850,17 @@ public class Game : GameWindow
             GameScreen.PauseMenu => "ПАУЗА",
             GameScreen.Settings => "НАСТРОЙКИ",
             GameScreen.Ending => "ТЫ ПРОСНУЛСЯ",
-            _ => "НОВЫЙ ЦИКЛ",
+            GameScreen.NewCycleConfirmation => "НАЧАТЬ С ПЕРВОГО УТРА?",
+            GameScreen.SaveFailure => "СОХРАНЕНИЕ НЕ УДАЛОСЬ",
+            _ => $"ДЕНЬ {_city?.Progress.Day ?? 1}",
         };
         DrawMenuText(heading, 0.08f, 0.27f, 0.0044f, 0.42f, dim);
         if (_screen == GameScreen.Ending)
             DrawMenuText("ТЕПЕРЬ ВЫБОР ЗА ТОБОЙ.", 0.08f, 0.33f, 0.003f, 0.42f, warm);
+        else if (_screen == GameScreen.NewCycleConfirmation)
+            DrawMenuText("ТЕКУЩИЙ ПРОГРЕСС ОСТАНЕТСЯ В КОПИИ.", 0.08f, 0.33f, 0.003f, 0.42f, warm);
+        else if (_screen == GameScreen.SaveFailure)
+            DrawMenuText("ПОСЛЕДНИЕ ИЗМЕНЕНИЯ НЕ ЗАПИСАНЫ.", 0.08f, 0.33f, 0.003f, 0.42f, warm);
         else if (_screen == GameScreen.MainMenu && _offlineGrowthMinutes >= 1)
             DrawMenuText($"ГЕРОЙ РОС {Math.Ceiling(_offlineGrowthMinutes)} МИН",
                 0.08f, 0.33f, 0.003f, 0.42f, warm);
@@ -800,6 +878,8 @@ public class Game : GameWindow
             _ui.Text(items[i], 0.104f, y + (height - size * 7) * 0.5f, size, selected ? text : dim);
         }
         DrawMenuText("ГЕРОЙ", 0.60f, 0.87f, 0.0035f, 0.30f, dim);
+        if (!string.IsNullOrEmpty(_menuError)) DrawMenuText(_menuError,0.08f,0.86f,0.003f,0.42f,warm);
+        else if (!string.IsNullOrEmpty(_saveWarning)) DrawMenuText(_saveWarning,0.08f,0.86f,0.003f,0.42f,warm);
         _ui.Rect(0.60f, 0.92f, 0.29f, 0.002f, accent);
         _ui.Render(_shader, _modelL, _viewL, _projL, _colorL, _ambL, _lightL, _fogColL);
 
@@ -932,6 +1012,7 @@ public class Game : GameWindow
         }
 
         RenderMiniMap();
+        if (!string.IsNullOrEmpty(_saveWarning)) DrawMenuText(_saveWarning,0.28f,0.035f,0.0028f,0.45f,warm);
         RenderFeedback();
         if (_dialogueNpc != null) RenderDialogue();
         RenderDialogueFeedback();
@@ -1141,13 +1222,30 @@ public class Game : GameWindow
 
     protected override void OnResize(ResizeEventArgs e) { base.OnResize(e); GL.Viewport(0, 0, e.Width, e.Height); }
 
+    private bool SaveCurrentGame()
+    {
+        bool saved = _city?.SaveGame() ?? true;
+        _saveWarning = saved ? "" : "Прогресс не сохранён. Запись будет повторена.";
+        _saveTimer = saved ? 0f : AutoSaveIntervalSeconds - 5f;
+        return saved;
+    }
+
+    protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
+    {
+        base.OnClosing(e);
+        if (e.Cancel || _profileOptions != null || _allowUnsavedClose || SaveCurrentGame()) return;
+        e.Cancel = true;
+        _screen = GameScreen.SaveFailure;
+        _menuIndex = 0;
+        _captured = false;
+        CursorState = CursorState.Normal;
+    }
+
     protected override void OnUnload()
     {
         if (_runtimeProfiler is { IsComplete: false })
             _runtimeProfiler.Complete(CreateRuntimeProfileSnapshot(), interrupted: true);
 
-        if (_profileOptions == null)
-            _city?.SaveGame();
         _city?.Dispose();
         _ui.Dispose();
         _heroPreview.Dispose();

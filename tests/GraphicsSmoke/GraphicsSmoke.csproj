@@ -12,6 +12,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="VisualProbe.cs.txt" />
+    <Compile Include="PlaythroughProbe.cs.txt" />
     <ProjectReference Include="../../Probuzhdenie.csproj" />
   </ItemGroup>
   <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk" />

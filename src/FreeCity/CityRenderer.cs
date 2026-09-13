@@ -87,7 +87,7 @@ public class CityRenderer : IDisposable
         }
     }
 
-    public void SaveGame() => SaveSystem.Save(_seed, _progress, _awareness, _timeOfDay, _npcs);
+    public bool SaveGame() => SaveSystem.Save(_seed, _progress, _awareness, _timeOfDay, _npcs);
 
     public void RestoreNpcs(List<SaveSystem.NpcSaveData>? npcData)
     {

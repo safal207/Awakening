@@ -1,0 +1,236 @@
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
+using System.Linq;
+using System.Reflection;
+using System.Text.Json;
+using OpenTK.Mathematics;
+using OpenTK.Windowing.Common;
+using OpenTK.Windowing.GraphicsLibraryFramework;
+using Probuzhdenie;
+using Probuzhdenie.FreeCity;
+
+sealed class PlaythroughProbe : Game
+{
+    const BindingFlags Private = BindingFlags.Instance | BindingFlags.NonPublic;
+    const double Step = 1.0 / 30;
+    readonly string route;
+    readonly bool resume;
+    readonly Stopwatch watchdog = new();
+    IEnumerator<Keys[]>? script;
+    Keys[] keys = Array.Empty<Keys>();
+    public Exception? Failure { get; private set; }
+    public bool Finished { get; private set; }
+    object Get(string field) => typeof(Game).GetField(field,Private)!.GetValue(this)!;
+    CityRenderer City => (CityRenderer)Get("_city");
+    NpcCharacter? Dialogue => (NpcCharacter?)Get("_dialogueNpc");
+
+    PlaythroughProbe(string route, bool resume) { this.route=route; this.resume=resume; }
+
+    public static void RunSuite(bool interactive)
+    {
+        string root = Path.GetFullPath(Path.Combine("artifacts","playthrough-"+DateTime.UtcNow.ToString("yyyyMMdd-HHmmss")));
+        Directory.CreateDirectory(root);
+        var pathProperty=typeof(SaveSystem).GetProperty("SaveFilePath",BindingFlags.Static|BindingFlags.NonPublic)!;
+        string original=(string)pathProperty.GetValue(null)!;
+        try
+        {
+            foreach (string route in interactive ? new[]{"interactive"} : new[]{"repair","delay","newcycle","savefailure"})
+            {
+                string path=Path.Combine(root,route+".json");
+                File.WriteAllText(path,JsonSerializer.Serialize(new {Version=3,Seed=424242,Day=route=="newcycle"?7:1,Memory=route=="newcycle"?41f:0f,TimeOfDay=8f,LastSavedUtc=DateTime.UtcNow}));
+                pathProperty.SetValue(null,path);
+                Console.WriteLine("Isolated playtest save: "+path);
+                if (interactive) { using var game=new Game(); game.Run(); return; }
+                foreach (bool resume in route=="savefailure" ? new[]{false} : new[]{false,true})
+                {
+                    using var game=new PlaythroughProbe(route,resume);
+                    game.Run();
+                    if (game.Failure != null) throw new Exception(route+" playthrough failed",game.Failure);
+                    if (!game.Finished) throw new Exception("Playthrough interrupted before completion");
+                }
+                Console.WriteLine("PLAYTHROUGH PASS: "+route+(route=="savefailure" ? " with failed-close guard and autosave recovery" : " with window recreation and save reload"));
+            }
+            File.WriteAllText(Path.Combine(root,"result.json"),JsonSerializer.Serialize(new {Result="PASS",Routes=new[]{"repair","delay","newcycle","savefailure"},ReloadedRoutes=new[]{"repair","delay","newcycle"},Input="scripted keyboard state through Game update; no native key hold"}));
+        }
+        finally { pathProperty.SetValue(null,original); MemoryRuntime.Reset(); }
+    }
+
+    protected override void OnLoad()
+    {
+        base.OnLoad();
+        ClientSize=new Vector2i(1280,720);
+        WindowState=WindowState.Normal;
+        VSync=VSyncMode.Off;
+        script=Play().GetEnumerator();
+        watchdog.Start();
+    }
+
+    protected override void PollInput()
+    {
+        var input=(Input)Get("_input");
+        var current=(bool[])typeof(Input).GetField("_currentKeys",Private)!.GetValue(input)!;
+        var previous=(bool[])typeof(Input).GetField("_previousKeys",Private)!.GetValue(input)!;
+        Array.Copy(current,previous,current.Length);
+        Array.Clear(current);
+        foreach (var key in keys) current[(int)key]=true;
+    }
+
+    protected override void OnUpdateFrame(FrameEventArgs args)
+    {
+        try
+        {
+            if (watchdog.Elapsed.TotalSeconds>150) throw new Exception("Playthrough watchdog: "+City.Progress.DistrictEpisode.Phase);
+            if (script == null || !script.MoveNext()) { Finished=true; Close(); return; }
+            keys=script.Current;
+            base.OnUpdateFrame(new FrameEventArgs(Step));
+        }
+        catch (Exception e)
+        {
+            Failure=e;
+            Console.WriteLine(e);
+            // A failing storage fixture must not trap the test in the close guard.
+            typeof(Game).GetField("_allowUnsavedClose",Private)!.SetValue(this,true);
+            Close();
+        }
+    }
+
+    IEnumerable<Keys[]> Press(Keys key) { yield return new[]{key}; yield return Array.Empty<Keys>(); }
+    IEnumerable<Keys[]> Wait(int frames) { for (int i=0;i<frames;i++) yield return Array.Empty<Keys>(); }
+    void Require(bool ok,string message) { if(!ok) throw new Exception(message+"; player="+City.Player!.Position+"; phase="+City.Progress.DistrictEpisode.Phase); }
+
+    IEnumerable<Keys[]> Walk(Vector3 target,string label)
+    {
+        Console.WriteLine("Walk: "+label);
+        int frames=0;
+        while (Vector2.Distance(City.Player!.Position.Xz,target.Xz)>0.7f)
+        {
+            if(++frames>600) throw new Exception("Blocked on route to "+label+" at "+City.Player.Position);
+            Require(Dialogue==null,"unexpected dialogue while walking");
+            Vector2 direction=Vector2.Normalize(target.Xz-City.Player.Position.Xz);
+            var camera=(Camera)Get("_cam");
+            Vector2 forward=Vector2.Normalize(camera.Front.Xz), right=Vector2.Normalize(camera.Right.Xz);
+            float f=Vector2.Dot(direction,forward), r=Vector2.Dot(direction,right);
+            var held=new List<Keys>();
+            if(f>0.35f)held.Add(Keys.W); else if(f < -0.35f)held.Add(Keys.S);
+            if(r>0.35f)held.Add(Keys.D); else if(r < -0.35f)held.Add(Keys.A);
+            yield return held.ToArray();
+        }
+        foreach(var k in Wait(12))yield return k;
+    }
+
+    IEnumerable<Keys[]> Speak(int id,int choice)
+    {
+        foreach(var k in Wait(65))yield return k;
+        foreach(var k in Press(Keys.E))yield return k;
+        Require(Dialogue?.Id==id,"wrong dialogue target, expected "+id+", got "+Dialogue?.Id);
+        foreach(var k in Wait(4))yield return k;
+        for(int i=0;i<choice;i++) foreach(var k in Press(Keys.Down))yield return k;
+        foreach(var k in Press(Keys.Enter))yield return k;
+        Require(Dialogue==null,"dialogue failed to close");
+        foreach(var k in Wait(65))yield return k;
+    }
+
+    IEnumerable<Keys[]> Play()
+    {
+        Console.WriteLine("Playthrough: "+route+" resume="+resume);
+        if(route=="savefailure")
+        {
+            foreach(var k in Press(Keys.Enter))yield return k;
+            var property=typeof(SaveSystem).GetProperty("SaveFilePath",BindingFlags.Static|BindingFlags.NonPublic)!;
+            string path=(string)property.GetValue(null)!;
+            property.SetValue(null,Path.GetDirectoryName(path));
+            foreach(var k in Press(Keys.Escape))yield return k;
+            Require(!string.IsNullOrEmpty((string)Get("_saveWarning")),"save failure is invisible in pause menu");
+            foreach(var k in Press(Keys.Down))yield return k;
+            foreach(var k in Press(Keys.Down))yield return k;
+            foreach(var k in Press(Keys.Enter))yield return k;
+            Require(Get("_screen").ToString()=="SaveFailure","failed close did not keep game open");
+            foreach(var k in Press(Keys.Escape))yield return k;
+            property.SetValue(null,path);
+            foreach(var k in Press(Keys.Enter))yield return k;
+            foreach(var k in Wait(165))yield return k;
+            Require(string.IsNullOrEmpty((string)Get("_saveWarning")),"autosave did not recover after storage became available");
+            property.SetValue(null,Path.GetDirectoryName(path));
+            foreach(var k in Press(Keys.Escape))yield return k;
+            foreach(var k in Press(Keys.Down))yield return k;
+            foreach(var k in Press(Keys.Down))yield return k;
+            foreach(var k in Press(Keys.Enter))yield return k;
+            Require(Get("_screen").ToString()=="SaveFailure","second failed close lost guard");
+            foreach(var k in Press(Keys.Down))yield return k;
+            Finished=true;
+            foreach(var k in Press(Keys.Enter))yield return k;
+            yield break;
+        }
+        if(route=="newcycle")
+        {
+            if(resume)
+            {
+                Require(City.Progress.Day==1 && City.Progress.Memory==0 && City.Progress.DistrictEpisode.Phase==DistrictPhase.Routine,"new cycle did not survive reload");
+                yield break;
+            }
+            Require(City.Progress.Day==7 && City.Progress.Memory==41,"restart fixture failed");
+            foreach(var k in Press(Keys.Down))yield return k;
+            foreach(var k in Press(Keys.Enter))yield return k;
+            Require(Get("_screen").ToString()=="NewCycleConfirmation" && (int)Get("_menuIndex")==0,"restart must default to cancel");
+            foreach(var k in Press(Keys.Enter))yield return k;
+            Require(Get("_screen").ToString()=="MainMenu" && City.Progress.Day==7,"cancel changed the current cycle");
+            foreach(var k in Press(Keys.Enter))yield return k;
+            foreach(var k in Press(Keys.Down))yield return k;
+
+            var property=typeof(SaveSystem).GetProperty("SaveFilePath",BindingFlags.Static|BindingFlags.NonPublic)!;
+            string path=(string)property.GetValue(null)!;
+            string root=Path.GetDirectoryName(path)!;
+            property.SetValue(null,root);
+            foreach(var k in Press(Keys.Enter))yield return k;
+            property.SetValue(null,path);
+            Require(Get("_screen").ToString()=="NewCycleConfirmation" && City.Progress.Day==7 && !string.IsNullOrEmpty((string)Get("_menuError")),"failed write reset the old cycle");
+            foreach(var k in Press(Keys.Enter))yield return k;
+            Require(Get("_screen").ToString()=="Playing" && City.Progress.Day==1 && City.Progress.Memory==0 && MemoryRuntime.Current.Events.Count==0,"new cycle failed to reset world");
+            string backup=Directory.GetFiles(root,"save.before-new-cycle-*.json").Single();
+            using var data=JsonDocument.Parse(File.ReadAllText(backup));
+            Require(data.RootElement.GetProperty("Day").GetInt32()==7 && data.RootElement.GetProperty("Memory").GetSingle()==41,"backup did not retain previous progress");
+            foreach(var k in Wait(10))yield return k;
+            yield break;
+        }
+        foreach(var k in Press(Keys.Enter))yield return k;
+        Require(Get("_screen").ToString()=="Playing","menu start failed");
+        foreach(var k in Walk(new(11.5f,0.12f,10.8f),"crossing sidewalk"))yield return k;
+        if(!resume)
+        {
+            foreach(var k in Walk(new(7.5f,0.12f,10.8f),"Lida"))yield return k;
+            foreach(var k in Speak(1,route=="repair"?1:0))yield return k;
+            Require(City.Progress.DistrictEpisode.Phase==(route=="repair"?DistrictPhase.RepairPlanned:DistrictPhase.DelayPlanned),"Lida choice did not apply");
+            foreach(var k in Walk(FirstDistrictEpisode.Signal,"signal"))yield return k;
+            foreach(var k in Press(Keys.E))yield return k;
+            Require(City.Progress.DistrictEpisode.Phase==(route=="repair"?DistrictPhase.Repaired:DistrictPhase.WaitingForMark),"signal interaction did not apply");
+            if(route=="delay")
+            {
+                foreach(var k in Walk(FirstDistrictEpisode.MarkStart-new Vector3(1.5f,0,0),"Mark"))yield return k;
+                foreach(var k in Speak(2,0))yield return k;
+                Require(City.Progress.DistrictEpisode.Phase==DistrictPhase.MarkOnWay,"Mark did not accept invitation");
+            }
+            foreach(var k in Press(Keys.Escape))yield return k;
+            Require(Get("_screen").ToString()=="PauseMenu","pause/save failed");
+            yield break;
+        }
+        Require(City.Progress.DistrictEpisode.Phase==(route=="repair"?DistrictPhase.Repaired:DistrictPhase.MarkOnWay),"load lost episode state");
+        foreach(var k in Walk(new(7.5f,0.12f,10.8f),"meeting after load"))yield return k;
+        if(route=="delay")
+        {
+            int frames=0;
+            while(City.Progress.DistrictEpisode.Phase==DistrictPhase.MarkOnWay && ++frames<600)yield return Array.Empty<Keys>();
+            Require(City.Progress.DistrictEpisode.Phase==DistrictPhase.Met,"physical meeting did not happen");
+            foreach(var k in Speak(2,0))yield return k;
+        }
+        foreach(var k in Walk(FirstDistrictEpisode.Trace,"departure journal"))yield return k;
+        foreach(var k in Press(Keys.E))yield return k;
+        Require(City.FeedbackMessage.StartsWith("Журнал:"),"journal could not be read");
+        foreach(var k in Walk(FirstDistrictEpisode.Rest,"morning bench"))yield return k;
+        foreach(var k in Press(Keys.E))yield return k;
+        Require(City.Progress.Day==2,"rest did not cross morning");
+        Require(MemoryRuntime.Current.HasPersisted(FirstDistrictStory.MeetingEventId)==(route=="delay"),"unexpected memory outcome");
+        foreach(var k in Wait(10))yield return k;
+    }
+}

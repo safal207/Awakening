@@ -7,7 +7,7 @@ dotnet run --project tests/GraphicsSmoke/GraphicsSmoke.csproj -c Release
 ```
 
 The test opens the real game window, checks scripted menu clicks and portrait
-rotation, renders eleven scenes, checks portrait pixels and GL errors, compares
+rotation, renders eighteen scenes, checks portrait pixels and GL errors, compares
 shadow-enabled/disabled pixels, then minimizes/restores the window.
 Images go to `artifacts/manhattan-refresh`.
 Pass `--hero-qa` to write the same scenes, including the turnaround and face
@@ -18,6 +18,38 @@ The zero-frame `visual-profile.json` is a teardown artifact, NOT a performance r
 
 The `.cs.txt` extension keeps the harness outside the root project's default C#
 glob. This project explicitly compiles it and references the game project.
+
+## Gameplay And Save Recovery
+
+Run the gameplay probe separately from the visual probe:
+
+```powershell
+dotnet run --project tests/GraphicsSmoke/GraphicsSmoke.csproj -c Release -- --playthrough
+```
+
+The probe supplies scripted keyboard state to the normal game update, player
+controller, interaction detector and menu/dialogue handlers. It walks instead
+of teleporting and does not directly invoke story choices. Both repair and delay
+routes close and recreate the window, reload progress, read the journal and
+advance to the second morning. It also checks new-cycle cancellation, a backup
+of the previous cycle, failed writes, the failed-close guard, autosave recovery
+after resuming play and deliberate exit without saving.
+
+Saves and the result report are isolated under `artifacts/playthrough-<UTC time>`.
+The player's normal save is not read or written. IO errors in the `newcycle`
+and `savefailure` fixtures are intentional; the final result must still be PASS.
+The probe has a watchdog and exits nonzero if an assertion fails or the window
+is closed before completion. This verifies scripted gameplay, not native key
+timing, human comprehension or a performance budget.
+
+For a manual session using a separate first-morning save:
+
+```powershell
+dotnet run --project tests/GraphicsSmoke/GraphicsSmoke.csproj -c Release -- --interactive-playtest
+```
+
+The interactive mode prints its save path and leaves control to the player. It
+uses the normal game settings; no automated pass result is produced.
 
 ## Performance
 

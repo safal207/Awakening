@@ -12,7 +12,11 @@ using OpenTK.Windowing.Common;
 using Probuzhdenie;
 using Probuzhdenie.FreeCity;
 
-if (Array.IndexOf(args, "--mesh-benchmark") >= 0)
+if (Array.IndexOf(args, "--playthrough") >= 0 || Array.IndexOf(args, "--interactive-playtest") >= 0)
+{
+    PlaythroughProbe.RunSuite(Array.IndexOf(args, "--interactive-playtest") >= 0);
+}
+else if (Array.IndexOf(args, "--mesh-benchmark") >= 0)
 {
     var city = new CityRenderer(seed: 424242);
     var mesh = new CharacterMesh();
@@ -119,7 +123,9 @@ sealed class VisualProbe : Game
         (960,900,"Playing","district-dialogue-tall"),
         (1280,720,"Playing","district-meeting"),
         (1280,720,"Playing","district-morning"),
-        (960,540,"Playing","district-repair")
+        (960,540,"Playing","district-repair"),
+        (960,540,"NewCycleConfirmation","menu-new-cycle-960"),
+        (960,900,"SaveFailure","menu-save-failure-tall")
     };
     public VisualProbe(string output) : base(new RuntimeProfileOptions {
         DurationSeconds=600, ReportPath=output+"/visual-profile.json" }) { Output=output; }
@@ -151,13 +157,13 @@ sealed class VisualProbe : Game
             InputField("<Lmb>k__BackingField",held);
         }
         Screen("MainMenu");
-        Mouse(.2f,.54f,0,true,true);
+        Mouse(.2f,.645f,0,true,true);
         Call("UpdateMenu");
         if(Get("_screen").ToString()!="Settings") throw new Exception("Menu click did not select Settings");
         Screen("MainMenu"); Set("_menuIndex",0); Set("_heroPreviewYaw",0f);
         Mouse(.75f,.5f,30,true,true);Call("UpdateMenu");
         if(Math.Abs((float)Get("_heroPreviewYaw")-.36f)>.0001f)throw new Exception("Preview drag did not rotate");
-        Mouse(.2f,.54f,15,false,true);Call("UpdateMenu");
+        Mouse(.2f,.645f,15,false,true);Call("UpdateMenu");
         if(Get("_screen").ToString()!="MainMenu" || Math.Abs((float)Get("_heroPreviewYaw")-.54f)>.0001f)
             throw new Exception("Preview drag leaked into menu selection");
         Mouse(0,0,0,false,false);Call("UpdateMenu");
@@ -172,7 +178,9 @@ sealed class VisualProbe : Game
         field.SetValue(this,Enum.Parse(field.FieldType,shot.Screen));
         Set("_heroPreviewTime",0f);
         Set("_heroPreviewYaw",0f);
-        if (stage >= 11) { ConfigureDistrict(); return; }
+        if (stage >= 11 && stage <= 15) { ConfigureDistrict(); return; }
+        if (stage >= 16) Set("_menuIndex",0);
+        if (stage == 17) Set("_saveWarning","Прогресс не сохранён. Запись будет повторена.");
         if(stage >= 5 && stage < 10)
         {
             var city=(CityRenderer)Get("_city");
@@ -277,7 +285,7 @@ sealed class VisualProbe : Game
         GL.Viewport(0,0,ClientSize.X,ClientSize.Y);
         GL.ClearColor(.055f,.06f,.062f,1);
         GL.Clear(ClearBufferMask.ColorBufferBit|ClearBufferMask.DepthBufferBit);
-        if(stage < 4) Call("RenderMenu"); else if(stage==4 || stage==10) DrawTurnaround(stage==10); else DrawWorld();
+        if(stage < 4 || stage >= 16) Call("RenderMenu"); else if(stage==4 || stage==10) DrawTurnaround(stage==10); else DrawWorld();
         GL.Finish();
         if(++frame >= 4)
         {

@@ -12,7 +12,7 @@ public static class SaveSystem
     private const int CurrentSaveVersion = 3;
     private static readonly string SaveDirectory = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Probuzhdenie");
-    private static readonly string SaveFilePath = Path.Combine(SaveDirectory, "save.json");
+    internal static string SaveFilePath { get; set; } = Path.Combine(SaveDirectory, "save.json");
     private static readonly JsonSerializerOptions SaveOptions = new() { WriteIndented = true };
     private static readonly JsonSerializerOptions LoadOptions = new() { PropertyNameCaseInsensitive = true };
     private static readonly UTF8Encoding SaveEncoding = new(false);
@@ -52,11 +52,32 @@ public static class SaveSystem
         public DistrictEpisodeSaveData? DistrictEpisode { get; set; }
     }
 
-    public static void Save(int seed, HeroProgress progress, AwarenessSystem awareness, float timeOfDay,
+    public static bool Save(int seed, HeroProgress progress, AwarenessSystem awareness, float timeOfDay,
         IReadOnlyList<NpcCharacter>? npcs = null, MemoryLedger? memoryLedger = null)
     {
-        SaveToPath(SaveFilePath, seed, progress, awareness, timeOfDay, DateTime.UtcNow, npcs,
+        return SaveToPath(SaveFilePath, seed, progress, awareness, timeOfDay, DateTime.UtcNow, npcs,
             memoryLedger ?? MemoryRuntime.Current);
+    }
+
+    public static bool TryBackupForNewCycle(out string error)
+    {
+        error = "";
+        try
+        {
+            if (File.Exists(SaveFilePath))
+            {
+                string directory = Path.GetDirectoryName(SaveFilePath)!;
+                string backup = Path.Combine(directory, $"save.before-new-cycle-{DateTime.UtcNow:yyyyMMdd-HHmmss}-{Guid.NewGuid():N}.json");
+                File.Copy(SaveFilePath, backup, overwrite: false);
+            }
+            return true;
+        }
+        catch (Exception e)
+        {
+            Console.WriteLine($"Could not back up the current cycle: {e}");
+            error = "Не удалось сохранить копию. Прежний цикл оставлен.";
+            return false;
+        }
     }
 
     public static (int seed, HeroProgress progress, float timeOfDay, float awareness, double offlineMinutes,
@@ -275,7 +296,7 @@ public static class SaveSystem
         }
     }
 
-    private static void SaveToPath(string path, int seed, HeroProgress progress, AwarenessSystem awareness,
+    private static bool SaveToPath(string path, int seed, HeroProgress progress, AwarenessSystem awareness,
         float timeOfDay, DateTime savedUtc, IReadOnlyList<NpcCharacter>? npcs, MemoryLedger? memoryLedger = null)
     {
         try
@@ -318,10 +339,12 @@ public static class SaveSystem
 
             string json = JsonSerializer.Serialize(data, SaveOptions);
             WriteAllTextAtomically(path, json);
+            return true;
         }
         catch (Exception e)
         {
             Console.WriteLine($"Failed to save game: {e}");
+            return false;
         }
     }
 
