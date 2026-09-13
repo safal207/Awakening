@@ -54,6 +54,8 @@ public class CityRenderer : IDisposable
     private readonly List<CityBlock> _blocks;
     private readonly List<InterestMarker> _markers = new();
     private readonly List<Box2> _buildingBounds = new();
+    internal StreetNavigation Navigation { get; }
+    private readonly Vector3[] _npcStepStarts = new Vector3[50];
     private readonly HashSet<string> _visitedMarkers = new();
     private readonly AwarenessSystem _awareness = new();
     private readonly int _seed;
@@ -361,11 +363,18 @@ public class CityRenderer : IDisposable
         for (int i = 0; i < _npcs.Count; i++)
         {
             if (_npcs[i] == self || (_inside && _npcs[i] == _player)) continue;
-            if (_npcs[i].State == NpcState.Sleeping) continue;
             Vector3 diff = pos - _npcs[i].Position;
             float distSq = diff.LengthSquared;
             float minDist = radius + 0.35f;
             if (distSq >= minDist * minDist) continue;
+            if (distSq < 0.0001f)
+            {
+                Vector3 escape = self == null ? Vector3.UnitX : self.Position - _npcs[i].Position;
+                escape.Y = 0;
+                if (escape.LengthSquared < 0.0001f) escape = Vector3.UnitX;
+                pos += Vector3.Normalize(escape) * minDist;
+                continue;
+            }
             float dist = MathF.Sqrt(Math.Max(distSq, 0.0001f));
             float overlap = (minDist - dist) / dist;
             pos += diff * overlap;
@@ -469,7 +478,7 @@ public class CityRenderer : IDisposable
         return focus + delta * safeHit;
     }
 
-    private static bool SegmentIntersectsBox(Vector3 start, Vector3 end, Vector3 min, Vector3 max, out float entry)
+    internal static bool SegmentIntersectsBox(Vector3 start, Vector3 end, Vector3 min, Vector3 max, out float entry)
     {
         Vector3 delta = end - start;
         float first = 0f;
@@ -546,6 +555,7 @@ public class CityRenderer : IDisposable
         }
         BuildInterestMarkers();
         _buildingBounds.AddRange(DistrictScene.PropBounds);
+        Navigation = new StreetNavigation(_buildingBounds);
         SpawnNpcs(seed);
         PlaceDistrictActors();
     }
@@ -600,14 +610,19 @@ public class CityRenderer : IDisposable
     private void SpawnNpcs(int seed)
     {
         var rng = new Random(seed);
+        var homes = new HashSet<Vector3>();
+        var workplaces = new HashSet<Vector3>();
         for (int i = 0; i < 50; i++)
         {
             float hx = (float)(rng.NextDouble() - 0.5) * 180f;
             float hz = (float)(rng.NextDouble() - 0.5) * 180f;
             float wx = (float)(rng.NextDouble() - 0.5) * 180f;
             float wz = (float)(rng.NextDouble() - 0.5) * 180f;
-            _npcs.Add(new NpcCharacter(ClampToWalkable(new Vector3(hx, 0, hz),0.3f),
-                ClampToWalkable(new Vector3(wx, 0, wz),0.3f), seed + i * 397, id: i));
+            Vector3 home = Navigation.ClosestPoint(new Vector3(hx, 0, hz), homes);
+            Vector3 work = Navigation.ClosestPoint(new Vector3(wx, 0, wz), workplaces);
+            homes.Add(home);
+            workplaces.Add(work);
+            _npcs.Add(new NpcCharacter(home, work, seed + i * 397, id: i));
         }
 
         _player = _npcs[0];
@@ -621,11 +636,9 @@ public class CityRenderer : IDisposable
         const float minDist = 0.7f;
         for (int i = 0; i < _npcs.Count; i++)
         {
-            if (_npcs[i].State == NpcState.Sleeping) continue;
             if (_inside && _npcs[i] == _player) continue;
             for (int j = i + 1; j < _npcs.Count; j++)
             {
-                if (_npcs[j].State == NpcState.Sleeping) continue;
                 if (_inside && _npcs[j] == _player) continue;
 
                 Vector3 diff = _npcs[i].Position - _npcs[j].Position;
@@ -639,12 +652,13 @@ public class CityRenderer : IDisposable
                     dist = 0.01f;
                 }
 
-                float overlap = (minDist - dist) / dist * 0.5f;
-                Vector3 push = diff * overlap;
-                _npcs[i].Position += push;
-                _npcs[i].Position = ClampToWalkable(_npcs[i].Position, 0.3f);
-                _npcs[j].Position -= push;
-                _npcs[j].Position = ClampToWalkable(_npcs[j].Position, 0.3f);
+                bool fixedI = _npcs[i] == _player || _npcs[i].Id is 1 or 2;
+                bool fixedJ = _npcs[j] == _player || _npcs[j].Id is 1 or 2;
+                Vector3 push = diff * ((minDist - dist) / dist);
+                if (!fixedI)
+                    _npcs[i].Position = ClampToWalkable(_npcs[i].Position + push * (fixedJ ? 1f : 0.5f), 0.3f);
+                if (!fixedJ)
+                    _npcs[j].Position = ClampToWalkable(_npcs[j].Position - push * (fixedI ? 1f : 0.5f), 0.3f);
             }
         }
     }
@@ -884,17 +898,7 @@ public class CityRenderer : IDisposable
             _feedbackTimer = Math.Max(0f, _feedbackTimer - dt);
         AdvanceDayClock(dt);
 
-        foreach (var npc in _npcs)
-        {
-            if (npc == _player) continue;
-            if (npc.Id is 1 or 2)
-            {
-                continue;
-            }
-            npc.Update(_timeOfDay, dt);
-            if (npc.State != NpcState.Sleeping)
-                npc.Position = ClampToWalkable(npc.Position, 0.25f);
-        }
+        UpdateCitizens(dt);
 
         UpdateDistrict(dt);
 
@@ -941,8 +945,6 @@ public class CityRenderer : IDisposable
 
         if (_player != null && _player.State != NpcState.Aware)
             _awareness.Update(_player, _timeOfDay, dt);
-
-        PushCharactersApart();
 
         BuildNpcMesh();
 
@@ -1032,6 +1034,53 @@ public class CityRenderer : IDisposable
 
         _npcCount = _characterMesh.VertexCount;
         UploadDynamic(_characterMesh.Data, _characterMesh.FloatCount);
+    }
+
+    internal void UpdateCitizens(float dt)
+    {
+        if (dt <= 0) return;
+        Navigation.BeginStep();
+        Box2? tram = DistrictScene.TramPresent(_progress.DistrictEpisode, _progress.Day)
+            ? DistrictScene.TramBounds(_progress.DistrictEpisode) : null;
+        for (int i = 0; i < _npcs.Count; i++)
+        {
+            var npc = _npcs[i];
+            _npcStepStarts[i] = npc.Position;
+            if (npc == _player || npc.Id is 1 or 2) continue;
+            npc.UpdateSchedule(_timeOfDay, dt, Navigation, tram);
+            Vector3 before = _npcStepStarts[i];
+            Vector3 proposed = SteerAroundPeople(npc, before, npc.Position, tram);
+            npc.Position = Navigation.IsSegmentClear(before, proposed, tram) ? proposed : before;
+            npc.Position.Y = CityGenerator.GroundHeight(npc.Position.X, npc.Position.Z);
+        }
+        PushCharactersApart();
+        for (int i = 0; i < _npcs.Count; i++)
+            if (_npcs[i] != _player && _npcs[i].Id is not (1 or 2))
+                _npcs[i].UpdateMotion(_npcStepStarts[i], dt);
+    }
+
+    private Vector3 SteerAroundPeople(NpcCharacter self, Vector3 before, Vector3 proposed, Box2? tram)
+    {
+        Vector3 delta = proposed - before;
+        delta.Y = 0;
+        float distance = delta.Length;
+        if (distance < 0.0001f) return proposed;
+        Vector3 forward = delta / distance;
+        foreach (var other in _npcs)
+        {
+            if (other == self || _inside && other == _player) continue;
+            Vector3 offset = other.Position - before;
+            offset.Y = 0;
+            float ahead = Vector3.Dot(offset, forward);
+            if (ahead <= 0 || ahead > 1.6f || (offset - forward * ahead).LengthSquared > 0.64f) continue;
+            Vector3 right = new(forward.Z, 0, -forward.X);
+            Vector3 side = before + Vector3.Normalize(forward + right * 1.2f) * distance;
+            if (Navigation.IsSegmentClear(before, side, tram)) return side;
+            side = before + Vector3.Normalize(forward - right * 1.2f) * distance;
+            if (Navigation.IsSegmentClear(before, side, tram)) return side;
+            break;
+        }
+        return proposed;
     }
 
     private unsafe void UploadDynamic(float[] data, int len)

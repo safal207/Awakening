@@ -7,7 +7,7 @@ dotnet run --project tests/GraphicsSmoke/GraphicsSmoke.csproj -c Release
 ```
 
 The test opens the real game window, checks scripted menu clicks and portrait
-rotation, renders twenty-six scenes, checks portrait pixels and GL errors, compares
+rotation, renders twenty-eight scenes, checks portrait pixels and GL errors, compares
 shadow-enabled/disabled pixels, then minimizes/restores the window.
 Images go to `artifacts/manhattan-refresh`.
 Pass `--hero-qa` to write the same scenes, including the turnaround and face
@@ -22,6 +22,9 @@ tram with/without drawing at its projected world position. The probe also checks
 that its VBO and total allocated geometry bytes stay stable during departure.
 Two more captures cover failed loading without a fake player preview and a
 successful recovery notice in a tall window.
+The final two captures show pedestrians before and after walking to opposite
+destinations through the normal city update. Model-toggle pixel checks at each
+pedestrian's projected position verify actual rendering, not just CPU movement.
 
 The `.cs.txt` extension keeps the harness outside the root project's default C#
 glob. This project explicitly compiles it and references the game project.

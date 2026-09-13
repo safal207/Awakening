@@ -21,6 +21,7 @@ if (args.Length > 0 && args[0] == "--functional-test")
     bool integrationOk = MemoryIntegrationTests.Run(out string integrationMessage);
     bool roundTripOk = SaveSystem.RunMemoryRoundTripTest(out string roundTripMessage);
     bool districtOk = DistrictEpisodeTests.Run(out string districtMessage);
+    bool navigationOk = NavigationTests.Run(out string navigationMessage);
     Console.WriteLine(functionalMessage);
     Console.WriteLine(memoryMessage);
     Console.WriteLine(sverkaMessage);
@@ -29,7 +30,8 @@ if (args.Length > 0 && args[0] == "--functional-test")
     Console.WriteLine(integrationMessage);
     Console.WriteLine(roundTripMessage);
     Console.WriteLine(districtMessage);
-    Environment.Exit(functionalOk && memoryOk && sverkaOk && storyOk && ledgerOk && integrationOk && roundTripOk && districtOk ? 0 : 1);
+    Console.WriteLine(navigationMessage);
+    Environment.Exit(functionalOk && memoryOk && sverkaOk && storyOk && ledgerOk && integrationOk && roundTripOk && districtOk && navigationOk ? 0 : 1);
 }
 
 if (args.Length == 1 && args[0] == "--memory-test")

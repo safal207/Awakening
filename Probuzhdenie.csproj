@@ -16,8 +16,10 @@
   <ItemGroup>
     <Compile Remove="unreal/**/*.cs" />
     <PackageReference Include="OpenTK" Version="4.8.0" />
+    <PackageReference Include="RoyT.AStar" Version="3.0.2" />
     <PackageReference Include="StbImageSharp" Version="2.30.16" />
     <None Update="assets/**/*" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Update="licenses/**/*" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

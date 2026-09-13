@@ -136,7 +136,9 @@ sealed class VisualProbe : Game
         (1280,720,"Playing","tram-resumed"),
         (960,540,"Playing","tram-gone-960"),
         (960,540,"LoadFailure","load-failure-960"),
-        (960,900,"MainMenu","menu-recovered-tall")
+        (960,900,"MainMenu","menu-recovered-tall"),
+        (1280,720,"Playing","citizens-before"),
+        (1280,720,"Playing","citizens-after")
     };
     public VisualProbe(string output) : base(new RuntimeProfileOptions {
         DurationSeconds=600, ReportPath=output+"/visual-profile.json" }) { Output=output; }
@@ -189,6 +191,7 @@ sealed class VisualProbe : Game
         field.SetValue(this,Enum.Parse(field.FieldType,shot.Screen));
         Set("_heroPreviewTime",0f);
         Set("_heroPreviewYaw",0f);
+        if(stage>=26) { ConfigureCitizens(); return; }
         if (stage >= 18 && stage <= 23) { ConfigureDeparture(); return; }
         if(stage>=24)
         {
@@ -231,6 +234,38 @@ sealed class VisualProbe : Game
             city.UpdateNpcs(0);
         }
     }
+    void ConfigureCitizens()
+    {
+        var city=(CityRenderer)Get("_city");
+        Set("_menuError",""); Set("_loadNotice","");
+        if(stage==26)
+        {
+            city.TimeOfDay=9;
+            foreach(var npc in city.Npcs)npc.State=NpcState.Aware;
+            var left=city.Npcs[3]; var right=city.Npcs[4];
+            left.Reset(); right.Reset();
+            left.State=right.State=NpcState.Walking;
+            left.Position=right.WorkPos=new Vector3(-1.5f,.12f,-16.5f);
+            right.Position=left.WorkPos=new Vector3(26.5f,.12f,-16.5f);
+            foreach(var npc in city.Npcs.Skip(5))
+                if(Vector3.Distance(npc.Position,left.WorkPos)<2 || Vector3.Distance(npc.Position,right.WorkPos)<2)
+                    npc.Position+=new Vector3(0,0,112);
+        }
+        else
+        {
+            for(int i=0;i<180;i++)city.UpdateNpcs(.1f);
+            if(city.Npcs[3].State!=NpcState.Working || city.Npcs[4].State!=NpcState.Working)
+                throw new Exception("Rendered pedestrians did not reach their opposite destinations");
+        }
+        city.UpdateNpcs(0);
+        var camera=(Camera)Get("_cam");
+        Vector3 focus=new(12.5f,1,-16.5f);
+        camera.Pos=camera.TargetPos=focus+new Vector3(0,24,-5);
+        camera.Front=Vector3.Normalize(focus-camera.Pos);
+        camera.Up=Vector3.UnitY;
+        camera.Right=Vector3.Normalize(Vector3.Cross(camera.Front,Vector3.UnitY));
+    }
+
     void ConfigureDeparture()
     {
         var city=(CityRenderer)Get("_city");
@@ -372,6 +407,7 @@ sealed class VisualProbe : Game
         {
             if(stage==5) CheckShadows();
             if(stage>=18 && stage<=23) CheckTramRender();
+            if(stage>=26) CheckCitizenPixels();
             var error=GL.GetError();
             if(error!=ErrorCode.NoError) throw new Exception("GL error: "+error);
             SavePng(Output+"/"+shots[stage].Name+".png",ClientSize.X,ClientSize.Y);
@@ -382,6 +418,38 @@ sealed class VisualProbe : Game
         }
         SwapBuffers();
     }
+    void CheckCitizenPixels()
+    {
+        var city=(CityRenderer)Get("_city");
+        var field=typeof(CityRenderer).GetField("_npcCount",Private)!;
+        byte[] Read()
+        {
+            var pixels=new byte[ClientSize.X*ClientSize.Y*3];
+            GL.ReadPixels(0,0,ClientSize.X,ClientSize.Y,PixelFormat.Rgb,PixelType.UnsignedByte,pixels);
+            return pixels;
+        }
+        byte[] visible=Read();
+        int count=(int)field.GetValue(city)!;
+        byte[] hidden;
+        try { field.SetValue(city,0); DrawWorld(); GL.Finish(); hidden=Read(); }
+        finally { field.SetValue(city,count); DrawWorld(); GL.Finish(); }
+        var camera=(Camera)Get("_cam");
+        foreach(int id in new[]{3,4})
+        {
+            Vector4 clip=Vector4.TransformRow(new Vector4(city.Npcs[id].Position+Vector3.UnitY,1),camera.View*camera.Proj(ClientSize.X/(float)ClientSize.Y));
+            int x=(int)((clip.X/clip.W*.5f+.5f)*ClientSize.X),y=(int)((clip.Y/clip.W*.5f+.5f)*ClientSize.Y);
+            int changed=0;
+            for(int py=Math.Max(0,y-25);py<Math.Min(ClientSize.Y,y+25);py++)
+                for(int px=Math.Max(0,x-20);px<Math.Min(ClientSize.X,x+20);px++)
+                {
+                    int at=(py*ClientSize.X+px)*3;
+                    if(Math.Abs(visible[at]-hidden[at])+Math.Abs(visible[at+1]-hidden[at+1])+Math.Abs(visible[at+2]-hidden[at+2])>30)changed++;
+                }
+            if(changed<20)throw new Exception("No rendered pedestrian at route position: "+id);
+            Console.WriteLine("Pedestrian "+id+" pixels: "+changed);
+        }
+    }
+
     void CheckTramRender()
     {
         var city=(CityRenderer)Get("_city");
