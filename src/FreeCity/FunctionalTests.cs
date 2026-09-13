@@ -178,6 +178,9 @@ public static class FunctionalTests
         awareness.Restore(99f);
         var player = new NpcCharacter(Vector3.Zero, Vector3.Zero, seed: 1001);
         awareness.Update(player, timeOfDay: 16f, dt: 2f);
+        Expect(Nearly(awareness.Level, 99f), "waiting does not grant awareness", failures);
+        awareness.Add(1f);
+        awareness.Update(player, timeOfDay: 16f, dt: 0f);
         Expect(Nearly(awareness.Level, 100f), "awareness reaches 100", failures);
         Expect(player.State == NpcState.Aware, "awareness wakes the player", failures);
     }

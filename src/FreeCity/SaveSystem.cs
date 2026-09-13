@@ -9,7 +9,7 @@ namespace Probuzhdenie.FreeCity;
 
 public static class SaveSystem
 {
-    private const int CurrentSaveVersion = 1;
+    private const int CurrentSaveVersion = 2;
     private static readonly string SaveDirectory = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Probuzhdenie");
     private static readonly string SaveFilePath = Path.Combine(SaveDirectory, "save.json");
@@ -29,7 +29,7 @@ public static class SaveSystem
 
     private class SaveData
     {
-        public int Version { get; set; } = CurrentSaveVersion;
+        public int Version { get; set; }
         public int Seed { get; set; }
         public int Day { get; set; }
         public float Memory { get; set; }
@@ -48,6 +48,7 @@ public static class SaveSystem
         public List<int>? DailyTalkedNpcs { get; set; }
         public List<MemoryEvent> MemoryEvents { get; set; } = new();
         public List<MemoryAnchorSaveData> MemoryAnchors { get; set; } = new();
+        public List<string> RewardedDialogueChoices { get; set; } = new();
     }
 
     public static void Save(int seed, HeroProgress progress, AwarenessSystem awareness, float timeOfDay,
@@ -134,6 +135,97 @@ public static class SaveSystem
         }
     }
 
+    public static bool RunMemoryRoundTripTest(out string message)
+    {
+        string path = Path.Combine(Path.GetTempPath(), $"awakening-memory-test-{Guid.NewGuid():N}.json");
+        var previousLedger = MemoryRuntime.Current;
+        int previousHero = MemoryRuntime.HeroId;
+        void Require(bool ok, string detail) { if (!ok) throw new InvalidOperationException(detail); }
+        try
+        {
+            foreach (bool consent in new[] { true, false })
+            {
+                MemoryRuntime.Reset();
+                var progress = new HeroProgress();
+                var city = new CityRenderer(424242, progress);
+                var lida = city.Npcs[1];
+                var mark = city.Npcs[2];
+                if (!consent) mark.Trust = 0f;
+                FirstDistrictStory.TryGetDialogue(lida, progress, out _, out var choices);
+                var lidaChoice = choices[0];
+                Require(lida.ApplyChoice(lidaChoice, progress), "Lida creates candidate");
+
+                SaveToPath(path, 424242, progress, city.Awareness, 13f, DateTime.UtcNow, city.Npcs, MemoryRuntime.Current);
+                var loaded = LoadFromPath(path);
+                Require(loaded.memoryLedger.FindAnchor(FirstDistrictStory.MeetingEventId)?.Status == MemoryAnchorStatus.Candidate,
+                    "candidate survives save before witness decision");
+                MemoryRuntime.Replace(loaded.memoryLedger);
+                progress = loaded.progress;
+                city = new CityRenderer(loaded.seed, progress);
+                city.RestoreNpcs(loaded.npcs);
+                mark = city.Npcs[2];
+                Require(!city.Npcs[1].ApplyChoice(lidaChoice, progress), "Lida reward not replayed after load");
+                FirstDistrictStory.TryGetDialogue(mark, progress, out _, out choices);
+                var witnessChoice = choices[0];
+                Require(mark.ApplyChoice(witnessChoice, progress), "Mark decides after load");
+
+                SaveToPath(path, 424242, progress, city.Awareness, 23.9f, DateTime.UtcNow, city.Npcs, MemoryRuntime.Current);
+                loaded = LoadFromPath(path);
+                MemoryRuntime.Replace(loaded.memoryLedger);
+                progress = loaded.progress;
+                city = new CityRenderer(loaded.seed, progress);
+                city.RestoreNpcs(loaded.npcs);
+                city.TimeOfDay = 24f;
+                city.AdvanceDayClock(0.1f);
+                Require(progress.Day == 2, "loaded world crosses midnight");
+                Require(loaded.memoryLedger.HasPersisted(FirstDistrictStory.MeetingEventId) == consent, "correct morning outcome");
+                string reason = loaded.memoryLedger.FindAnchor(FirstDistrictStory.MeetingEventId)!.DecisionReason;
+
+                for (int morning = 0; morning < 20; morning++) progress.NewDay();
+                SaveToPath(path, 424242, progress, city.Awareness, 8f, DateTime.UtcNow, city.Npcs, loaded.memoryLedger);
+                var restored = LoadFromPath(path);
+                MemoryRuntime.Replace(restored.memoryLedger);
+                var restoredCity = new CityRenderer(restored.seed, restored.progress);
+                restoredCity.RestoreNpcs(restored.npcs);
+                var before = (restored.progress.Memory, restored.progress.Empathy, restored.progress.Agency);
+                Require(!restoredCity.Npcs[2].ApplyChoice(witnessChoice, restored.progress), "witness reward not replayed after 20 mornings and load");
+                Require(before == (restored.progress.Memory, restored.progress.Empathy, restored.progress.Agency), "qualities unchanged on replay");
+                Require(restored.memoryLedger.Events.Count == 1 && restored.memoryLedger.Anchors.Count == 1,
+                    "one event and anchor across save and reset");
+                Require(restored.memoryLedger.HasPersisted(FirstDistrictStory.MeetingEventId) == consent &&
+                    restored.memoryLedger.FindAnchor(FirstDistrictStory.MeetingEventId)!.DecisionReason == reason,
+                    "preserve final decision and causal reason");
+            }
+
+            foreach (string legacy in new[] { "{\"Seed\":424242,\"Day\":1}", "{\"Version\":1,\"Seed\":424242,\"Day\":1}" })
+            {
+                File.WriteAllText(path, legacy, SaveEncoding);
+                var loaded = LoadFromPath(path);
+                Require(loaded.seed == 424242 && loaded.memoryLedger.Events.Count == 0 &&
+                    loaded.progress.RewardedDialogueChoices.Count == 0, "legacy save defaults");
+            }
+            File.WriteAllText(path, JsonSerializer.Serialize(new { Version = CurrentSaveVersion + 1 }), SaveEncoding);
+            bool refusedFutureVersion = false;
+            try { LoadFromPath(path); }
+            catch (InvalidDataException) { refusedFutureVersion = true; }
+            Require(refusedFutureVersion, "do not overwrite a newer save schema");
+            message = "Memory save/load tests passed (both outcomes, 20 mornings, replay and legacy saves).";
+            return true;
+        }
+        catch (Exception e)
+        {
+            message = "Memory save/load tests failed: " + e.Message;
+            return false;
+        }
+        finally
+        {
+            MemoryRuntime.Replace(previousLedger);
+            MemoryRuntime.HeroId = previousHero;
+            try { if (File.Exists(path)) File.Delete(path); }
+            catch { }
+        }
+    }
+
     private static void SaveToPath(string path, int seed, HeroProgress progress, AwarenessSystem awareness,
         float timeOfDay, DateTime savedUtc, IReadOnlyList<NpcCharacter>? npcs, MemoryLedger? memoryLedger = null)
     {
@@ -171,6 +263,7 @@ public static class SaveSystem
                 DailyTalkedNpcs = new List<int>(progress.DailyTalkedNpcs),
                 MemoryEvents = memoryLedger?.Events.ToList() ?? new List<MemoryEvent>(),
                 MemoryAnchors = memoryLedger?.Anchors.Select(MemoryAnchorSaveData.From).ToList() ?? new List<MemoryAnchorSaveData>(),
+                RewardedDialogueChoices = progress.RewardedDialogueChoices.ToList(),
             };
 
             string json = JsonSerializer.Serialize(data, SaveOptions);
@@ -200,6 +293,7 @@ public static class SaveSystem
             var progress = new HeroProgress();
             progress.Restore(data.Day, data.Memory, data.Curiosity, data.Empathy, data.Agency, data.Courage);
             progress.LoadDiscoveredEggs(data.DiscoveredEggs);
+            progress.LoadDialogueRewards(data.RewardedDialogueChoices);
             progress.LoadDailyObjective(data.DailyObjectiveDay, data.DailyTalkProgress, data.DailyObjectiveCompleted, data.DailyTalkedNpcs);
 
             var ledger = new MemoryLedger();

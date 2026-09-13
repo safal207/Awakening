@@ -317,15 +317,18 @@ public class Game : GameWindow
             else if (_input.KeyPressed(Keys.Enter) || _input.KeyPressed(Keys.Space) || _input.GpAPressed)
             {
                 var choice = _dialogueChoices[_dialogueChoiceIndex];
-                _dialogueNpc.ApplyChoice(choice, _city!.Progress);
-                _city.Awareness.Add(2f);
-                _city.RegisterTalk();
+                bool applied = _dialogueNpc.ApplyChoice(choice, _city!.Progress);
+                if (applied)
+                {
+                    if (choice.HasQualityGain) _city.Awareness.Add(2f);
+                    _city.RegisterTalk();
+                }
 
                 // Track daily objective
-                bool objectiveCompleted = _city.Progress.RegisterDailyTalk(_dialogueNpc.Id);
+                bool objectiveCompleted = applied && _city.Progress.RegisterDailyTalk(_dialogueNpc.Id);
 
                 // Build feedback text from stat deltas
-                _dialogueFeedback = BuildChoiceFeedback(choice);
+                _dialogueFeedback = applied ? BuildChoiceFeedback(choice) : "Этот разговор уже остался в памяти.";
                 if (objectiveCompleted)
                     _dialogueFeedback = "ЦЕЛЬ ВЫПОЛНЕНА  |  ПАМ +2  ЛЮБ +1  ВОЛ +1";
                 _dialogueFeedbackTimer = 3f;

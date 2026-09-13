@@ -509,7 +509,7 @@ public class CityRenderer : IDisposable
             float wx = (float)(rng.NextDouble() - 0.5) * 180f;
             float wz = (float)(rng.NextDouble() - 0.5) * 180f;
             _npcs.Add(new NpcCharacter(ClampToWalkable(new Vector3(hx, 0, hz),0.3f),
-                ClampToWalkable(new Vector3(wx, 0, wz),0.3f), seed + i * 397));
+                ClampToWalkable(new Vector3(wx, 0, wz),0.3f), seed + i * 397, id: i));
         }
 
         _player = _npcs[0];
@@ -760,12 +760,8 @@ public class CityRenderer : IDisposable
         }
     }
 
-    public void UpdateNpcs(float dt)
+    internal void AdvanceDayClock(float dt)
     {
-        _animationTime += dt;
-        if (_feedbackTimer > 0f)
-            _feedbackTimer = Math.Max(0f, _feedbackTimer - dt);
-
         _timeOfDay += dt * 0.03f;
         if (_timeOfDay > 24f)
         {
@@ -779,6 +775,14 @@ public class CityRenderer : IDisposable
                 npc.Reset();
             }
         }
+    }
+
+    public void UpdateNpcs(float dt)
+    {
+        _animationTime += dt;
+        if (_feedbackTimer > 0f)
+            _feedbackTimer = Math.Max(0f, _feedbackTimer - dt);
+        AdvanceDayClock(dt);
 
         foreach (var npc in _npcs)
         {

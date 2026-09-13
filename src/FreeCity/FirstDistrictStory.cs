@@ -65,8 +65,8 @@ public static class FirstDistrictStory
             line = "Марк уже пришёл? Вчера мы говорили у депо. Я помню его имя.";
             choices = new[]
             {
-                new DialogueChoice("Ты действительно помнишь вчера?", 2, 2, 1, 1, 2, 1, 0),
-                new DialogueChoice("Хорошо. Не будем торопиться.", 2, 1, 0, 0, 2, 1, 0),
+                new DialogueChoice("Ты действительно помнишь вчера?", 2, 2, 1, 1, 2, 1, 0, RewardId: "district1.lida.morning.remember"),
+                new DialogueChoice("Хорошо. Не будем торопиться.", 2, 1, 0, 0, 2, 1, 0, RewardId: "district1.lida.morning.slow"),
             };
             return true;
         }
@@ -76,8 +76,8 @@ public static class FirstDistrictStory
             line = "Марк? Не припоминаю. Вчера рейс ушёл как обычно, разве нет?";
             choices = new[]
             {
-                new DialogueChoice("Похоже, не всё переживает утро.", 0, 1, 2, 2, 0, 1, 1),
-                new DialogueChoice("Неважно. Продолжим работу.", 0, 0, 0, 0, 0, 1, 0),
+                new DialogueChoice("Похоже, не всё переживает утро.", 0, 1, 2, 2, 0, 1, 1, RewardId: "district1.lida.rejected.reflect"),
+                new DialogueChoice("Неважно. Продолжим работу.", 0, 0, 0, 0, 0, 1, 0, RewardId: "district1.lida.rejected.work"),
             };
             return true;
         }
@@ -87,8 +87,8 @@ public static class FirstDistrictStory
             line = "Я задержу рейс на минуту. Если Марк придёт — дальше он решает сам.";
             choices = new[]
             {
-                new DialogueChoice("Спасибо. Я поговорю с ним.", 2, 2, 0, 1, 2, 1, 0),
-                new DialogueChoice("Если передумаешь — скажи.", 1, 1, 0, 0, 2, 0, 0),
+                new DialogueChoice("Спасибо. Я поговорю с ним.", 2, 2, 0, 1, 2, 1, 0, RewardId: "district1.lida.delay.thanks"),
+                new DialogueChoice("Если передумаешь — скажи.", 1, 1, 0, 0, 2, 0, 0, RewardId: "district1.lida.delay.respect"),
             };
             return true;
         }
@@ -105,7 +105,7 @@ public static class FirstDistrictStory
         }
 
         line = "Сегодня всё идёт по расписанию.";
-        choices = new[] { new DialogueChoice("Понял.", 0, 0, 0, 0, 0, 0, 0) };
+        choices = new[] { new DialogueChoice("Понял.", 0, 0, 0, 0, 0, 0, 0, RewardId: "district1.lida.routine") };
         return true;
     }
 
@@ -120,8 +120,8 @@ public static class FirstDistrictStory
             line = "Лида вчера назвала меня по имени. Странно... я точно помню эту встречу.";
             choices = new[]
             {
-                new DialogueChoice("Значит, это осталось.", 2, 3, 2, 2, 2, 2, 1),
-                new DialogueChoice("Это твоя память. Не моя собственность.", 3, 4, 1, 1, 4, 1, 1),
+                new DialogueChoice("Значит, это осталось.", 2, 3, 2, 2, 2, 2, 1, RewardId: "district1.mark.morning.remember"),
+                new DialogueChoice("Это твоя память. Не моя собственность.", 3, 4, 1, 1, 4, 1, 1, RewardId: "district1.mark.morning.respect"),
             };
             return true;
         }
@@ -131,8 +131,8 @@ public static class FirstDistrictStory
             line = "У меня ощущение, что я вчера куда-то собирался. Но дальше — пусто.";
             choices = new[]
             {
-                new DialogueChoice("Я не буду придумывать за тебя.", 2, 3, 1, 1, 3, 1, 0),
-                new DialogueChoice("Попробуем разобраться в другой раз.", 1, 2, 1, 1, 2, 1, 1),
+                new DialogueChoice("Я не буду придумывать за тебя.", 2, 3, 1, 1, 3, 1, 0, RewardId: "district1.mark.rejected.respect"),
+                new DialogueChoice("Попробуем разобраться в другой раз.", 1, 2, 1, 1, 2, 1, 1, RewardId: "district1.mark.rejected.reflect"),
             };
             return true;
         }
@@ -144,7 +144,7 @@ public static class FirstDistrictStory
                 line = witness.Consented
                     ? "Я решил запомнить эту встречу. Если утром всё исчезнет — хотя бы проверим."
                     : "Я понял, что произошло, но не хочу это сохранять. Оставь мой выбор мне.";
-                choices = new[] { new DialogueChoice("Я принимаю твой выбор.", 2, 3, 0, 0, 4, 1, 1) };
+                choices = new[] { new DialogueChoice("Я принимаю твой выбор.", 2, 3, 0, 0, 4, 1, 1, RewardId: "district1.mark.witness.respect") };
                 return true;
             }
 
@@ -162,14 +162,14 @@ public static class FirstDistrictStory
             line = "Я каждый день ухаживаю за двором за депо. Почти никто туда не заходит.";
             choices = new[]
             {
-                new DialogueChoice("Расскажи про этот двор.", 3, 2, 1, 2, 2, 0, 0),
-                new DialogueChoice("Не до этого сейчас.", -5, -4, 0, 0, 0, 1, 0),
+                new DialogueChoice("Расскажи про этот двор.", 3, 2, 1, 2, 2, 0, 0, RewardId: "district1.mark.courtyard"),
+                new DialogueChoice("Не до этого сейчас.", -5, -4, 0, 0, 0, 1, 0, RewardId: "district1.mark.leave"),
             };
             return true;
         }
 
         line = "Доброе утро.";
-        choices = new[] { new DialogueChoice("Доброе.", 1, 0, 0, 0, 1, 0, 0) };
+        choices = new[] { new DialogueChoice("Доброе.", 1, 0, 0, 0, 1, 0, 0, RewardId: "district1.mark.routine") };
         return true;
     }
 

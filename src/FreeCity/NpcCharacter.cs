@@ -23,7 +23,11 @@ public readonly record struct DialogueChoice(
     float EmpathyGain,
     float AgencyGain,
     float CourageGain,
-    string ActionId = "");
+    string ActionId = "",
+    string RewardId = "")
+{
+    public bool HasQualityGain => MemoryGain > 0 || CuriosityGain > 0 || EmpathyGain > 0 || AgencyGain > 0 || CourageGain > 0;
+}
 
 public class NpcCharacter
 {
@@ -100,10 +104,10 @@ public class NpcCharacter
     private readonly float _shoppingStart;
     private readonly float _shoppingEnd;
 
-    public NpcCharacter(Vector3 home, Vector3 work, int seed)
+    public NpcCharacter(Vector3 home, Vector3 work, int seed, int? id = null)
     {
         _rng = new Random(seed);
-        Id = _nextId++;
+        Id = id ?? _nextId++;
         Name = $"Горожанин #{Id + 1}";
         HomePos = home;
         WorkPos = work;
@@ -312,21 +316,24 @@ public class NpcCharacter
         };
     }
 
-    public void ApplyChoice(DialogueChoice choice, HeroProgress progress)
+    public bool ApplyChoice(DialogueChoice choice, HeroProgress progress)
     {
+        if (!progress.TryClaimDialogueReward(Id, choice)) return false;
         Friendliness = Math.Clamp(Friendliness + choice.FriendlinessDelta, 0f, 100f);
         Trust = Math.Clamp(Trust + choice.TrustDelta, 0f, 100f);
         TimesTalked++;
         progress.AddQualities(choice.MemoryGain, choice.CuriosityGain, choice.EmpathyGain, choice.AgencyGain, choice.CourageGain);
-        if (choice.MemoryGain > 0 || choice.CuriosityGain > 0 || choice.EmpathyGain > 0 || choice.AgencyGain > 0 || choice.CourageGain > 0)
+        if (choice.HasQualityGain)
             Awareness = Math.Min(100f, Awareness + 1f);
         FirstDistrictStory.ApplyChoice(this, choice, progress);
+        return true;
     }
 
     public void Reset()
     {
-        State = NpcState.Walking;
-        Awareness = 0f;
+        bool awakened = State == NpcState.Aware || Awareness >= 100f;
+        State = awakened ? NpcState.Aware : NpcState.Walking;
+        Awareness = awakened ? 100f : 0f;
         Position = HomePos;
         Velocity = Vector3.Zero;
         _currentSpeed = 0f;

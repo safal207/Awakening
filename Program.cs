@@ -16,12 +16,16 @@ if (args.Length > 0 && args[0] == "--functional-test")
     bool sverkaOk = SverkaEngineTests.Run(out string sverkaMessage);
     bool storyOk = FirstDistrictStoryTests.Run(out string storyMessage);
     bool ledgerOk = MemoryLedgerSelfTest.Run(out string ledgerMessage);
+    bool integrationOk = MemoryIntegrationTests.Run(out string integrationMessage);
+    bool roundTripOk = SaveSystem.RunMemoryRoundTripTest(out string roundTripMessage);
     Console.WriteLine(functionalMessage);
     Console.WriteLine(memoryMessage);
     Console.WriteLine(sverkaMessage);
     Console.WriteLine(storyMessage);
     Console.WriteLine(ledgerMessage);
-    Environment.Exit(functionalOk && memoryOk && sverkaOk && storyOk && ledgerOk ? 0 : 1);
+    Console.WriteLine(integrationMessage);
+    Console.WriteLine(roundTripMessage);
+    Environment.Exit(functionalOk && memoryOk && sverkaOk && storyOk && ledgerOk && integrationOk && roundTripOk ? 0 : 1);
 }
 
 if (args.Length == 1 && args[0] == "--memory-test")

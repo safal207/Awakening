@@ -6,22 +6,26 @@ The M1 memory ledger is accepted only when the following invariants are executab
 - duplicate event IDs are idempotent;
 - an event alone is not persisted;
 - the actor cannot witness their own event;
-- unknown consent cannot create an anchor;
-- declined consent cannot create an anchor;
+- unknown consent cannot produce a persisted anchor;
+- declined consent produces a final rejected decision;
 - a trace is required;
 - the referenced event must exist;
-- an accepted independent witness can create an anchor;
-- an anchored event is persisted;
+- only an informed, consenting participant other than the hero can preserve an anchor;
+- candidates remain unpersisted until Sverka;
 - the same event cannot be anchored twice;
 - the trace and accepted witness remain retrievable;
 - malformed events are rejected.
 
-The executable checks live in `src/FreeCity/MemoryLedgerSelfTest.cs`.
+Core checks live in `src/FreeCity/MemoryLedgerSelfTest.cs` and
+`MemoryAnchorTests.cs`. The functional command also runs Sverka, story,
+integration and save/load regressions: both outcomes, 20 mornings, replayed
+dialogue rewards, stable NPC roles, no passive awareness, legacy/newer saves.
 
-Target command once wired into `Program.cs`:
+Available command (also configured in CI):
 
 ```bash
 dotnet run --configuration Release --no-build -- --memory-test
 ```
 
-Until that command is wired and executed in CI, the M1 memory ledger should be treated as **implemented but unverified**.
+Use `--functional-test` for the complete integrated suite and `--self-test` for
+the original save check. These are headless checks, not visual or Unreal QA.

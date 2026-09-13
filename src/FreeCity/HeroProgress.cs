@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace Probuzhdenie.FreeCity;
 
@@ -39,6 +41,25 @@ public class HeroProgress
     // Track which Easter eggs have been discovered to prevent repeated gains
     private readonly HashSet<string> _discoveredEggs = new();
     public IReadOnlyCollection<string> DiscoveredEggs => _discoveredEggs;
+
+    private readonly HashSet<string> _rewardedDialogueChoices = new(StringComparer.Ordinal);
+    public IReadOnlyCollection<string> RewardedDialogueChoices => _rewardedDialogueChoices;
+
+    public bool TryClaimDialogueReward(int npcId, DialogueChoice choice)
+    {
+        string id = !string.IsNullOrWhiteSpace(choice.RewardId) ? "reward:" + choice.RewardId :
+            !string.IsNullOrWhiteSpace(choice.ActionId) ? "action:" + choice.ActionId :
+            "legacy:" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(choice.Text ?? "")));
+        return _rewardedDialogueChoices.Add($"npc:{npcId}:{id}");
+    }
+
+    public void LoadDialogueRewards(IEnumerable<string>? ids)
+    {
+        _rewardedDialogueChoices.Clear();
+        if (ids == null) return;
+        foreach (string id in ids)
+            if (!string.IsNullOrWhiteSpace(id)) _rewardedDialogueChoices.Add(id);
+    }
 
     public void NewDay()
     {
