@@ -225,8 +225,8 @@ def build_character(
     right_leg = cube(f"{name}_LEG_R", (0.16, 0, 0.35), (0.18, 0.22, 0.7), body_mat, collection)
 
     for child in (body, head, left_leg, right_leg):
+        # These coordinates are already local to the character root.
         child.parent = root
-        child.matrix_parent_inverse = root.matrix_world.inverted()
 
     aim = empty(f"{name}_AIM", (0, 0, 1.4), collection)
     aim.parent = root
@@ -489,7 +489,7 @@ def build_cameras(chars: dict[str, dict[str, bpy.types.Object]], mats, col: bpy.
     set_key(cam2, 192, location=(4.8, -2.8, 2.1))
     set_bezier(cam2)
 
-    cam3 = add_camera("CAM_03_FACE", (2.8, -0.8, 1.75), 65, hero["aim"], col)
+    cam3 = add_camera("CAM_03_FACE", (2.8, -0.8, 1.75), 65, hero["head"], col)
     set_key(cam3, 193, location=(2.8, -0.8, 1.75))
     set_key(cam3, 288, location=(2.5, -0.55, 1.75))
     set_bezier(cam3)

@@ -1,0 +1,36 @@
+{
+  "status": "PASS",
+  "glb_bytes": 18822276,
+  "serialized_vertices": 132545,
+  "triangles": 179108,
+  "bones": 53,
+  "meshes": 23,
+  "embedded_images": 10,
+  "animations": [
+    "Hero_Idle_Prototype"
+  ],
+  "normalized_weights": true,
+  "max_influences": 4,
+  "reimport_bounds_min": [
+    -0.4227011203765869,
+    -0.3772597014904022,
+    -0.0030935381073504686
+  ],
+  "reimport_bounds_max": [
+    0.42269831895828247,
+    0.14027206599712372,
+    1.7956308126449585
+  ],
+  "reimport_height_m": 1.798724350752309,
+  "idle_max_vertex_motion_m": 0.0042426946758528815,
+  "skin_vertex_color_and_normal_exported": true,
+  "reimport_render_nonblank": true,
+  "version": "v3",
+  "limits": [
+    "No Unreal import performed",
+    "No locomotion or facial animation",
+    "No likeness approval",
+    "Skin subsurface is a Blender-specific setting",
+    "No game FPS or VRAM claim from offline renders"
+  ]
+}

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import sys
 import bpy
+from bpy_extras.object_utils import world_to_camera_view
 
 EXPECTED_CAMERAS = [
     "CAM_01_ROUTINE",
@@ -98,6 +99,33 @@ def main() -> None:
 
     if scene.get("causal_chain") != "NOTICE>INVESTIGATE>CHOOSE>ACT>WITNESS>ANCHOR>SVERKA>CONSEQUENCE":
         fail("causal_chain scene metadata missing or changed", failures)
+
+    # Object names alone do not prove that the camera follows the visible body.
+    original_frame = scene.frame_current
+    try:
+        for frame in (1, 96, 193, 288, 409, 480, 577, 648):
+            scene.frame_set(frame)
+            bpy.context.view_layer.update()
+            for name in ("HERO", "LIDA", "MARK"):
+                root = bpy.data.objects.get(name)
+                head = bpy.data.objects.get(name + "_HEAD")
+                aim = bpy.data.objects.get(name + "_AIM")
+                if not all((root, head, aim)):
+                    fail(f"missing character transform objects for {name}", failures)
+                    continue
+                if root.matrix_world.to_scale().length < 0.01:
+                    continue
+                offset = head.matrix_world.translation - aim.matrix_world.translation
+                if offset.length > 0.5:
+                    fail(f"{name} head/aim separation {offset.length:.3f}m at frame {frame}", failures)
+            if frame in (1, 96, 193, 288, 577, 648):
+                head = bpy.data.objects.get("HERO_HEAD")
+                if head and scene.camera:
+                    p = world_to_camera_view(scene, scene.camera, head.matrix_world.translation)
+                    if p.z <= 0 or not (0.05 <= p.x <= 0.95 and 0.05 <= p.y <= 0.95):
+                        fail(f"hero head outside camera at frame {frame}: {tuple(p)}", failures)
+    finally:
+        scene.frame_set(original_frame)
 
     if failures:
         print("FIRST_MEMORY_PREVIS_VALIDATION=FAIL")
