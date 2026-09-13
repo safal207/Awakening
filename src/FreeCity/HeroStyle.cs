@@ -28,6 +28,7 @@ public static class HeroStyle
 
     public static void ApplyTo(NpcCharacter hero)
     {
+        MemoryRuntime.HeroId = hero.Id;
         hero.Name = Name;
         hero.Height = Height;
         hero.Color = ShirtBlue;

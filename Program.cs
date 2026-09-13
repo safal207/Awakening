@@ -11,9 +11,30 @@ if (args.Length > 0 && args[0] == "--self-test")
 
 if (args.Length > 0 && args[0] == "--functional-test")
 {
-    bool ok = FunctionalTests.Run(out string message);
+    bool functionalOk = FunctionalTests.Run(out string functionalMessage);
+    bool memoryOk = MemoryAnchorTests.Run(out string memoryMessage);
+    bool sverkaOk = SverkaEngineTests.Run(out string sverkaMessage);
+    bool storyOk = FirstDistrictStoryTests.Run(out string storyMessage);
+    bool ledgerOk = MemoryLedgerSelfTest.Run(out string ledgerMessage);
+    Console.WriteLine(functionalMessage);
+    Console.WriteLine(memoryMessage);
+    Console.WriteLine(sverkaMessage);
+    Console.WriteLine(storyMessage);
+    Console.WriteLine(ledgerMessage);
+    Environment.Exit(functionalOk && memoryOk && sverkaOk && storyOk && ledgerOk ? 0 : 1);
+}
+
+if (args.Length == 1 && args[0] == "--memory-test")
+{
+    bool ok = MemoryLedgerSelfTest.Run(out string message);
     Console.WriteLine(message);
     Environment.Exit(ok ? 0 : 1);
+}
+
+if (args.Length > 0 && Array.IndexOf(args, "--runtime-profile") < 0)
+{
+    Console.Error.WriteLine("Unknown arguments. Use --self-test, --functional-test, --memory-test or --runtime-profile.");
+    Environment.Exit(2);
 }
 
 RuntimeProfileOptions? profileOptions = RuntimeProfileOptions.TryParse(args);

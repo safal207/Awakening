@@ -42,15 +42,11 @@ public class HeroProgress
 
     public void NewDay()
     {
+        MemoryRuntime.RunSverka(Day);
         Day++;
-        // Slight decay of qualities overnight to encourage active play
-        Memory = Math.Max(0f, Memory - 0.5f);
-        Curiosity = Math.Max(0f, Curiosity - 0.5f);
-        Empathy = Math.Max(0f, Empathy - 0.5f);
-        Agency = Math.Max(0f, Agency - 0.5f);
-        Courage = Math.Max(0f, Courage - 0.5f);
 
-        // Reset daily objective
+        // Earned qualities persist across mornings. Sverka resets the routine,
+        // not the hero's demonstrated growth.
         DailyTalkProgress = 0;
         DailyObjectiveDay = Day;
         DailyObjectiveCompleted = false;

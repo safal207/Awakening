@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 
 namespace Probuzhdenie.FreeCity;
 
@@ -9,44 +10,39 @@ public static class MemoryLedgerSelfTest
         try
         {
             var ledger = new MemoryLedger();
-            var firstMeeting = new MemoryEvent(
-                Id: "first_memory_lida_mark_meeting",
-                Day: 2,
-                Kind: "shared_meeting",
-                LocationId: "tram_plaza",
-                ActorId: 0,
-                ChoiceId: "leave_signal_repair_to_help_lida",
-                Description: "Lida delays the tram and meets Mark in the plaza.");
+            var meeting = Event("meeting");
+            Require(ledger.RegisterEvent(meeting), "record valid event");
+            Require(!ledger.RegisterEvent(meeting), "deduplicate event identity");
+            Require(!ledger.RegisterEvent(new MemoryEvent()), "reject incomplete event");
+            var invalidDay = Event("invalid-day");
+            invalidDay.Day = 0;
+            Require(!ledger.RegisterEvent(invalidDay), "reject invalid day");
+            Require(!ledger.RegisterAnchor(new MemoryAnchor { EventId = "missing" }), "reject orphan anchor");
 
-            Require(ledger.TryRecordEvent(firstMeeting), "valid event must be recorded");
-            Require(!ledger.TryRecordEvent(firstMeeting), "duplicate event ID must be idempotent");
-            Require(!ledger.IsPersisted(firstMeeting.Id), "event alone must not survive Sverka");
+            var anchor = Anchor(meeting.EventId, 12, true, true);
+            Require(ledger.RegisterAnchor(anchor), "record candidate anchor");
+            Require(!ledger.HasPersisted(meeting.EventId), "candidate must await Sverka");
+            Require(!ledger.RegisterAnchor(Anchor(meeting.EventId, 21, true, true)), "deduplicate anchor identity");
+            Require(ledger.ResolveForSverka(meeting.EventId, 0, out _), "preserve informed voluntary witness");
+            Require(ledger.FindEvent(meeting.EventId) == meeting && ledger.FindAnchor(meeting.EventId) == anchor,
+                "lookup uses canonical event identity");
+            Require(anchor.TraceId == "dispatcher-note", "preserve original trace");
 
-            Require(!ledger.TryCreateAnchor(firstMeeting.Id, "dispatcher_note", witnessNpcId: 0, WitnessConsent.Accepted),
-                "actor cannot witness their own event");
-            Require(!ledger.TryCreateAnchor(firstMeeting.Id, "dispatcher_note", witnessNpcId: 12, WitnessConsent.Unknown),
-                "unknown consent must not create an anchor");
-            Require(!ledger.TryCreateAnchor(firstMeeting.Id, "dispatcher_note", witnessNpcId: 12, WitnessConsent.Declined),
-                "declined consent must not create an anchor");
-            Require(!ledger.TryCreateAnchor(firstMeeting.Id, "", witnessNpcId: 12, WitnessConsent.Accepted),
-                "trace is required");
-            Require(!ledger.TryCreateAnchor("missing_event", "dispatcher_note", witnessNpcId: 12, WitnessConsent.Accepted),
-                "anchor requires an existing event");
-
-            Require(ledger.TryCreateAnchor(firstMeeting.Id, "dispatcher_note", witnessNpcId: 12, WitnessConsent.Accepted),
-                "accepted independent witness plus trace creates an anchor");
-            Require(ledger.IsPersisted(firstMeeting.Id), "anchored event must be marked persisted");
-            Require(!ledger.TryCreateAnchor(firstMeeting.Id, "another_trace", witnessNpcId: 13, WitnessConsent.Accepted),
-                "same event cannot be anchored twice");
-
-            Require(ledger.TryGetAnchor(firstMeeting.Id, out var anchor) && anchor != null,
-                "created anchor must be retrievable");
-            Require(anchor!.TraceId == "dispatcher_note", "anchor trace must remain stable");
-            Require(anchor.Witnesses.TryGetValue(12, out var consent) && consent == WitnessConsent.Accepted,
-                "accepted witness must be preserved");
-
-            var invalid = new MemoryEvent("", 0, "", "", 0, "", "");
-            Require(!ledger.TryRecordEvent(invalid), "invalid event must be rejected");
+            foreach (var test in new[]
+            {
+                (Id: "self", Witness: 0, Understood: true, Consent: true, Trace: "note", Reason: "missing_voluntary_participant_witness"),
+                (Id: "unknown", Witness: 12, Understood: false, Consent: true, Trace: "note", Reason: "missing_voluntary_participant_witness"),
+                (Id: "declined", Witness: 12, Understood: true, Consent: false, Trace: "note", Reason: "missing_voluntary_participant_witness"),
+                (Id: "no-trace", Witness: 12, Understood: true, Consent: true, Trace: "", Reason: "missing_trace"),
+            })
+            {
+                ledger.RegisterEvent(Event(test.Id));
+                var candidate = Anchor(test.Id, test.Witness, test.Understood, test.Consent);
+                candidate.TraceId = test.Trace;
+                ledger.RegisterAnchor(candidate);
+                Require(!ledger.ResolveForSverka(test.Id, 0, out string reason) && reason == test.Reason,
+                    "reject invalid persistence: " + test.Id);
+            }
 
             message = "Memory ledger self-test passed.";
             return true;
@@ -57,6 +53,19 @@ public static class MemoryLedgerSelfTest
             return false;
         }
     }
+
+    private static MemoryEvent Event(string id) => new()
+    {
+        EventId = id, Day = 1, EventType = "shared_meeting", LocationId = "tram-plaza",
+        ParticipantIds = new List<int> { 0, 12, 21 }, ChoiceId = "delay-tram",
+        Consequence = "Lida met Mark", HadAlternativeChoice = true,
+    };
+
+    private static MemoryAnchor Anchor(string id, int witness, bool understood, bool consent) => new()
+    {
+        EventId = id, TraceId = "dispatcher-note",
+        Witnesses = new List<MemoryWitness> { new() { NpcId = witness, UnderstoodEvent = understood, Consented = consent } },
+    };
 
     private static void Require(bool condition, string message)
     {

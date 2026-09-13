@@ -29,3 +29,6 @@ jobs:
 
       - name: Self-test
         run: dotnet run --configuration Release --no-build -- --self-test
+
+      - name: Memory ledger
+        run: dotnet run --configuration Release --no-build -- --memory-test
