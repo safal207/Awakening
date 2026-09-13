@@ -1,5 +1,4 @@
 using System;
-using System.Runtime.CompilerServices;
 using OpenTK.Mathematics;
 
 namespace Probuzhdenie.FreeCity;
@@ -27,26 +26,10 @@ public static class FirstMemorySlice
     // Stable semantic actor id for the player in narrative records. NPC ids are non-negative.
     public const int HeroActorId = -1;
 
-    private sealed class RuntimeState
-    {
-        public MemoryLedger Ledger { get; } = new();
-        public int ObservedDay { get; set; } = 1;
-    }
-
-    private static readonly ConditionalWeakTable<HeroProgress, RuntimeState> States = new();
     private static NpcCharacter? _lida;
     private static NpcCharacter? _mark;
 
-    internal static MemoryLedger LedgerFor(HeroProgress progress)
-    {
-        RuntimeState state = States.GetValue(progress, p => new RuntimeState { ObservedDay = p.Day });
-        if (progress.Day > state.ObservedDay)
-        {
-            state.Ledger.ApplySverka();
-            state.ObservedDay = progress.Day;
-        }
-        return state.Ledger;
-    }
+    internal static MemoryLedger LedgerFor(HeroProgress progress) => progress.Ledger;
 
     internal static void RegisterCharacter(NpcCharacter npc)
     {
@@ -66,7 +49,7 @@ public static class FirstMemorySlice
         out (string npcLine, DialogueChoice[] choices) dialogue)
     {
         dialogue = default;
-        MemoryLedger ledger = LedgerFor(progress);
+        MemoryLedger ledger = progress.Ledger;
 
         if (npc.NarrativeRole == NarrativeRole.Lida)
         {
@@ -151,7 +134,7 @@ public static class FirstMemorySlice
 
     public static bool ApplyChoice(NpcCharacter npc, DialogueChoice choice, HeroProgress progress)
     {
-        MemoryLedger ledger = LedgerFor(progress);
+        MemoryLedger ledger = progress.Ledger;
 
         if (choice.ActionId == HelpLidaActionId && npc.NarrativeRole == NarrativeRole.Lida)
         {
