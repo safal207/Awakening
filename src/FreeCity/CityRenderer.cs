@@ -38,7 +38,7 @@ public class CityRenderer : IDisposable
     private int _sceneryVao, _sceneryVbo, _sceneryCount, _sceneryGpuBytes;
     private int _districtVao, _districtVbo, _districtCount, _districtGpuBytes;
     private int _tramVao, _tramVbo, _tramCount, _tramGpuBytes;
-    private (DistrictPhase phase, int day) _districtMeshState = ((DistrictPhase)(-1), -1);
+    private (DistrictPhase phase, int day, ArchiveOutcome archive) _districtMeshState = ((DistrictPhase)(-1), -1, ArchiveOutcome.None);
     private int _facadeVao, _facadeVbo, _facadeCount, _facadeGpuBytes;
     private int _glassVao, _glassVbo, _glassCount, _glassGpuBytes;
     private readonly List<SceneRange> _facadeRanges = new(), _buildingRanges = new(), _windowRanges = new(),
@@ -565,7 +565,10 @@ public class CityRenderer : IDisposable
         _npcs[1].Position = FirstDistrictEpisode.Stop;
         _npcs[2].Position = _progress.Day == 1 ? _progress.DistrictEpisode.MarkPosition :
             MemoryRuntime.Current.HasPersisted(FirstDistrictStory.MeetingEventId) ? FirstDistrictEpisode.MarkMeeting : FirstDistrictEpisode.MarkStart;
+        if (_progress.Day >= 2) _npcs[3].Position = DistrictArchiveStory.NikaPosition;
     }
+
+    private bool IsDistrictActor(NpcCharacter npc) => npc.Id is 1 or 2 || npc.Id == 3 && _progress.Day >= 2;
 
     internal void UpdateDistrict(float dt)
     {
@@ -652,8 +655,8 @@ public class CityRenderer : IDisposable
                     dist = 0.01f;
                 }
 
-                bool fixedI = _npcs[i] == _player || _npcs[i].Id is 1 or 2;
-                bool fixedJ = _npcs[j] == _player || _npcs[j].Id is 1 or 2;
+                bool fixedI = _npcs[i] == _player || IsDistrictActor(_npcs[i]);
+                bool fixedJ = _npcs[j] == _player || IsDistrictActor(_npcs[j]);
                 Vector3 push = diff * ((minDist - dist) / dist);
                 if (!fixedI)
                     _npcs[i].Position = ClampToWalkable(_npcs[i].Position + push * (fixedJ ? 1f : 0.5f), 0.3f);
@@ -1046,7 +1049,7 @@ public class CityRenderer : IDisposable
         {
             var npc = _npcs[i];
             _npcStepStarts[i] = npc.Position;
-            if (npc == _player || npc.Id is 1 or 2) continue;
+            if (npc == _player || IsDistrictActor(npc)) continue;
             npc.UpdateSchedule(_timeOfDay, dt, Navigation, tram);
             Vector3 before = _npcStepStarts[i];
             Vector3 proposed = SteerAroundPeople(npc, before, npc.Position, tram);
@@ -1055,7 +1058,7 @@ public class CityRenderer : IDisposable
         }
         PushCharactersApart();
         for (int i = 0; i < _npcs.Count; i++)
-            if (_npcs[i] != _player && _npcs[i].Id is not (1 or 2))
+            if (_npcs[i] != _player && !IsDistrictActor(_npcs[i]))
                 _npcs[i].UpdateMotion(_npcStepStarts[i], dt);
     }
 
@@ -1116,7 +1119,7 @@ public class CityRenderer : IDisposable
     {
         if (_inside && _interiorCount == 0 && _insideBlock is CityBlock interior)
             BuildInteriorGeometry(interior);
-        var districtState = (_progress.DistrictEpisode.Phase, _progress.Day);
+        var districtState = (_progress.DistrictEpisode.Phase, _progress.Day, DistrictArchiveStory.Outcome);
         if (!_inside && _districtMeshState != districtState)
         {
             Upload(ref _districtVao, ref _districtVbo, ref _districtCount, ref _districtGpuBytes, DistrictScene.Build(_progress.DistrictEpisode, _progress.Day));

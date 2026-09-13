@@ -18,6 +18,7 @@ public static class FirstDistrictStory
 
     public static bool CanApplyChoice(NpcCharacter npc, DialogueChoice choice, HeroProgress progress)
     {
+        if (!DistrictArchiveStory.CanApply(npc, choice, progress)) return false;
         var episode = progress.DistrictEpisode;
         return choice.ActionId switch
         {
@@ -43,6 +44,7 @@ public static class FirstDistrictStory
 
     public static bool TryGetDialogue(NpcCharacter npc, HeroProgress progress, out string line, out DialogueChoice[] choices)
     {
+        if (DistrictArchiveStory.TryDialogue(npc, progress, out line, out choices)) return true;
         line = "";
         choices = System.Array.Empty<DialogueChoice>();
 
@@ -55,6 +57,7 @@ public static class FirstDistrictStory
 
     public static void ApplyChoice(NpcCharacter npc, DialogueChoice choice, HeroProgress progress)
     {
+        DistrictArchiveStory.Apply(npc, choice, progress);
         switch (choice.ActionId)
         {
             case LidaDelayAction:

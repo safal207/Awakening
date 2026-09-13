@@ -44,7 +44,7 @@ public static class DistrictEpisodeTests
             Check(DistrictScene.TramPresent(episode, 1) && episode.TramDeparting && episode.TramOffset == Vector3.Zero, "repair starts departure without popping out");
             city.Player.Position = FirstDistrictEpisode.Rest;
             Check(city.InteractWithDistrict(DistrictInteraction.Rest) && city.Progress.Day == 2 && city.TimeOfDay == 8f, "rest crosses real midnight");
-            Check(!city.InteractWithDistrict(DistrictInteraction.Rest), "rest is not repeatable on day two");
+            Check(city.InteractWithDistrict(DistrictInteraction.Rest) && city.Progress.Day == 3, "rest remains available for third morning");
             Check(MemoryRuntime.Current.Events.Count == 0 && episode.TraceText(2).Contains("Встречи не было"), "repair never invents meeting memory");
 
             city = Fresh(); episode = city.Progress.DistrictEpisode;

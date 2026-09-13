@@ -322,6 +322,27 @@ sealed class PlaythroughProbe : Game
         foreach(var k in Press(Keys.E))yield return k;
         Require(City.Progress.Day==2,"rest did not cross morning");
         Require(MemoryRuntime.Current.HasPersisted(FirstDistrictStory.MeetingEventId)==(route=="delay"),"unexpected memory outcome");
+        foreach(var k in Walk(DistrictArchiveStory.NikaPosition + new Vector3(0,0,-1.5f),"Nika on second morning"))yield return k;
+        foreach(var k in Speak(3,0))yield return k;
+        if(route=="delay")
+        {
+            Require(DistrictArchiveStory.Requested,"Nika did not request individual permissions");
+            foreach(var k in Walk(new(4.5f,.12f,10.5f),"Lida archive permission"))yield return k;
+            foreach(var k in Speak(1,0))yield return k;
+            foreach(var k in Walk(new(8f,.12f,10.5f),"Mark archive permission"))yield return k;
+            foreach(var k in Speak(2,0))yield return k;
+            Require(DistrictArchiveStory.Permission(1)==true && DistrictArchiveStory.Permission(2)==true,"missing publication permission");
+            foreach(var k in Walk(DistrictArchiveStory.NikaPosition + new Vector3(0,0,-1.5f),"return to Nika"))yield return k;
+            foreach(var k in Speak(3,0))yield return k;
+        }
+        Require(DistrictArchiveStory.Outcome==(route=="delay"?ArchiveOutcome.Meeting:ArchiveOutcome.Repair),"wrong archive branch");
+        Require(!MemoryRuntime.Current.HasPersisted(DistrictArchiveStory.EntryId),"page persisted before Sverka");
+        foreach(var k in Walk(FirstDistrictEpisode.Rest,"third morning bench"))yield return k;
+        foreach(var k in Press(Keys.E))yield return k;
+        Require(City.Progress.Day==3 && MemoryRuntime.Current.HasPersisted(DistrictArchiveStory.EntryId),"third morning lost page");
+        foreach(var k in Walk(FirstDistrictEpisode.Trace,"surviving archive page"))yield return k;
+        foreach(var k in Press(Keys.E))yield return k;
+        Require(City.FeedbackMessage.StartsWith("Страница сохранилась:"),"third morning evidence invisible");
         foreach(var k in Wait(10))yield return k;
     }
 }

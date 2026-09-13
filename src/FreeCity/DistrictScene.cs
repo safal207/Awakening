@@ -29,6 +29,11 @@ internal static class DistrictScene
         SceneGeometry.Box(v,new(5.2f,2.78f,12.42f),new(0.5f,0.5f,0.04f),new(0.9f,0.92f,0.87f));
         SceneGeometry.Box(v,new(-3.5f,0.12f,12.3f),new(1f,1.1f,0.4f),metal);
         SceneGeometry.Box(v,new(-3.45f,1.22f,12.25f),new(0.9f,0.04f,0.5f),new(0.84f,0.85f,0.81f));
+        if (day >= 2 && DistrictArchiveStory.Outcome is ArchiveOutcome.Meeting or ArchiveOutcome.Repair)
+        {
+            SceneGeometry.Box(v,new(-3.46f,1.27f,12.26f),new(0.92f,0.035f,0.48f),new(0.55f,0.18f,0.25f));
+            SceneGeometry.Box(v,new(-3.4f,1.307f,12.29f),new(0.8f,0.015f,0.4f),new(0.92f,0.94f,0.93f));
+        }
         if (episode.Finished)
         {
             Vector3 ink = day > 1 && MemoryRuntime.Current.HasPersisted(FirstDistrictStory.MeetingEventId) ? green : amber;

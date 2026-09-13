@@ -138,7 +138,12 @@ sealed class VisualProbe : Game
         (960,540,"LoadFailure","load-failure-960"),
         (960,900,"MainMenu","menu-recovered-tall"),
         (1280,720,"Playing","citizens-before"),
-        (1280,720,"Playing","citizens-after")
+        (1280,720,"Playing","citizens-after"),
+        (960,540,"Playing","archive-nika-960"),
+        (960,900,"Playing","archive-permissions-tall"),
+        (1280,720,"Playing","archive-third-morning"),
+        (960,540,"Playing","archive-refusal-960"),
+        (1280,720,"Playing","archive-repair-morning")
     };
     public VisualProbe(string output) : base(new RuntimeProfileOptions {
         DurationSeconds=600, ReportPath=output+"/visual-profile.json" }) { Output=output; }
@@ -191,6 +196,7 @@ sealed class VisualProbe : Game
         field.SetValue(this,Enum.Parse(field.FieldType,shot.Screen));
         Set("_heroPreviewTime",0f);
         Set("_heroPreviewYaw",0f);
+        if(stage>=28) { ConfigureArchive(); return; }
         if(stage>=26) { ConfigureCitizens(); return; }
         if (stage >= 18 && stage <= 23) { ConfigureDeparture(); return; }
         if(stage>=24)
@@ -376,6 +382,65 @@ sealed class VisualProbe : Game
         Set("_currentInteraction",new Probuzhdenie.Player.InteractionDetector(city).Detect(city.Player!.Position));
         Console.WriteLine("District visual stage: " + shots[stage].Name + "; phase=" + city.Progress.DistrictEpisode.Phase);
     }
+    void ConfigureArchive()
+    {
+        var city=(CityRenderer)Get("_city");
+        if(city.IsInside)city.ExitInterior();
+        Set("_loadNotice", ""); Set("_saveWarning", ""); Set("_dialogueNpc",null!);
+        MemoryRuntime.Reset();
+        city.Progress.Restore(1,0,0,0,0,0);
+        city.Progress.LoadDialogueRewards(Array.Empty<string>());
+        city.Progress.DistrictEpisode.Restore(new DistrictEpisodeSaveData(),MemoryRuntime.Current);
+        city.TimeOfDay=8;
+        city.Npcs[1].Position=FirstDistrictEpisode.Stop;
+        city.Npcs[2].Position=FirstDistrictEpisode.MarkStart;
+        foreach(int id in new[]{1,2}) { city.Npcs[id].Trust=30; city.Npcs[id].Friendliness=30; }
+        void Choose(int id)
+        {
+            FirstDistrictStory.TryGetDialogue(city.Npcs[id],city.Progress,out _,out var choices);
+            if(!city.Npcs[id].ApplyChoice(choices[0],city.Progress))throw new Exception("Archive fixture choice failed: "+id);
+        }
+        var episode=city.Progress.DistrictEpisode;
+        episode.Plan(stage!=32,1);
+        episode.ActivateSignal(FirstDistrictEpisode.Signal,8,1);
+        if(stage!=32)
+        {
+            episode.Invite(city.Npcs[2],1,8);
+            city.Player!.Position=FirstDistrictEpisode.Stop+new Vector3(0,0,-2);
+            for(int i=0;i<180;i++)city.UpdateNpcs(.1f);
+            if(episode.Phase!=DistrictPhase.Met)throw new Exception("Archive fixture has no meeting");
+            Choose(2);
+        }
+        city.Player!.Position=FirstDistrictEpisode.Rest;
+        city.InteractWithDistrict(DistrictInteraction.Rest);
+        if(stage is 29 or 30 or 31)
+        {
+            Choose(3);
+            Choose(1);
+            if(stage==31)city.Npcs[2].Trust=0;
+            Choose(2);
+        }
+        if(stage is 30 or 32)
+        {
+            Choose(3);
+            city.Player.Position=FirstDistrictEpisode.Rest;
+            city.InteractWithDistrict(DistrictInteraction.Rest);
+            if(!MemoryRuntime.Current.HasPersisted(DistrictArchiveStory.EntryId))throw new Exception("Archive page did not survive");
+        }
+        city.Player.Position=DistrictArchiveStory.NikaPosition+new Vector3(0,0,-1.5f);
+        for(int i=4;i<city.Npcs.Count;i++) { city.Npcs[i].Position=new Vector3(-100-i*2,0,-100); city.Npcs[i].State=NpcState.Aware; }
+        city.UpdateNpcs(0);
+        var nika=city.Npcs[3];
+        FirstDistrictStory.TryGetDialogue(nika,city.Progress,out string line,out var replies);
+        Set("_dialogueNpc",nika);Set("_dialogueNpcLine",line);Set("_dialogueChoices",replies);
+        var camera=(Camera)Get("_cam");
+        Vector3 focus=nika.Position+new Vector3(0,1.3f,0);
+        camera.Pos=camera.TargetPos=focus+new Vector3(4,2.3f,-5);
+        camera.Front=Vector3.Normalize(focus-camera.Pos);
+        camera.Up=Vector3.UnitY;
+        camera.Right=Vector3.Normalize(Vector3.Cross(camera.Front,Vector3.UnitY));
+        Set("_currentInteraction",new Probuzhdenie.Player.InteractionDetector(city).Detect(city.Player.Position));
+    }
     protected override void OnUpdateFrame(FrameEventArgs args)
     {
         if(stage != shots.Length || ++minimizedUpdates < 3) return;
@@ -407,7 +472,8 @@ sealed class VisualProbe : Game
         {
             if(stage==5) CheckShadows();
             if(stage>=18 && stage<=23) CheckTramRender();
-            if(stage>=26) CheckCitizenPixels();
+            if(stage is 26 or 27) CheckCitizenPixels(3,4);
+            if(stage>=28) CheckCitizenPixels(3);
             var error=GL.GetError();
             if(error!=ErrorCode.NoError) throw new Exception("GL error: "+error);
             SavePng(Output+"/"+shots[stage].Name+".png",ClientSize.X,ClientSize.Y);
@@ -418,7 +484,7 @@ sealed class VisualProbe : Game
         }
         SwapBuffers();
     }
-    void CheckCitizenPixels()
+    void CheckCitizenPixels(params int[] ids)
     {
         var city=(CityRenderer)Get("_city");
         var field=typeof(CityRenderer).GetField("_npcCount",Private)!;
@@ -434,7 +500,7 @@ sealed class VisualProbe : Game
         try { field.SetValue(city,0); DrawWorld(); GL.Finish(); hidden=Read(); }
         finally { field.SetValue(city,count); DrawWorld(); GL.Finish(); }
         var camera=(Camera)Get("_cam");
-        foreach(int id in new[]{3,4})
+        foreach(int id in ids)
         {
             Vector4 clip=Vector4.TransformRow(new Vector4(city.Npcs[id].Position+Vector3.UnitY,1),camera.View*camera.Proj(ClientSize.X/(float)ClientSize.Y));
             int x=(int)((clip.X/clip.W*.5f+.5f)*ClientSize.X),y=(int)((clip.Y/clip.W*.5f+.5f)*ClientSize.Y);

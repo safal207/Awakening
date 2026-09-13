@@ -41,7 +41,10 @@ The probe supplies scripted keyboard state to the normal game update, player
 controller, interaction detector and menu/dialogue handlers. It walks instead
 of teleporting and does not directly invoke story choices. Both repair and delay
 routes close and recreate the window, reload progress, read the journal and
-advance to the second morning. The repair route pauses and reloads during the
+advance through Nika's archive decisions to the third morning. The delay route
+walks to each participant for separate publication permission, returns to Nika,
+rests and reads the surviving page. The repair route records verified repair
+instead of a fictional meeting. It pauses and reloads during the
 animated tram departure. It also checks new-cycle cancellation, a backup
 of the previous cycle, failed writes, the failed-close guard, autosave recovery
 after resuming play and deliberate exit without saving.
@@ -100,3 +103,12 @@ The automatic route measures rendering and simulation load. It deliberately
 moves through the map and does not prove walkability, narrative progression,
 full controller support, long-term memory stability or network readiness.
 Screenshots use scripted camera/time values, not a completed story playthrough.
+
+The visual suite now has 33 scenes. Five archive scenes cover Nika's introduction
+at 960x540, both permissions at 960x900, the surviving meeting page, refusal at
+960x540 and the repair page. NPC-toggle framebuffer differences verify Nika is
+rendered in each; text wrapping still requires inspection of the PNGs.
+The CPU archive suite in `--functional-test` separately covers partial permission
+save/load, refusal by either participant, private memory, rejected/missed meetings,
+late completion, one-shot rewards and multiple subsequent mornings. These are not
+human playtest results or a 15-minute FPS/VRAM profile.

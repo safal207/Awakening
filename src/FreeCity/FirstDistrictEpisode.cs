@@ -99,6 +99,9 @@ public sealed class FirstDistrictEpisode
         Idle(mark);
         if (city.Progress.Day != 1)
         {
+            Idle(city.Npcs[3]);
+            if (city.Player != null && Near(city.Player.Position, city.Npcs[3].Position, 5f))
+                Face(city.Npcs[3], city.Player.Position, dt);
             if (MemoryRuntime.Current.HasPersisted(FirstDistrictStory.MeetingEventId))
             {
                 Face(lida, mark.Position, dt);
@@ -215,7 +218,7 @@ public sealed class FirstDistrictEpisode
     {
         if (Near(player, Signal, 2f)) return DistrictInteraction.Signal;
         if (Finished && Near(player, Trace, 2f)) return DistrictInteraction.Trace;
-        if (day == 1 && Finished && Near(player, Rest, 2f)) return DistrictInteraction.Rest;
+        if (Finished && Near(player, Rest, 2f)) return DistrictInteraction.Rest;
         return DistrictInteraction.None;
     }
 
@@ -233,6 +236,7 @@ public sealed class FirstDistrictEpisode
 
     public string TraceText(int day)
     {
+        if (day >= 2 && DistrictArchiveStory.TraceText(day) is string archive) return archive;
         if (Phase == DistrictPhase.Repaired) return "Журнал: сигнал исправлен, рейс отправлен вовремя. Встречи не было.";
         if (Phase == DistrictPhase.Missed && InvitationWithdrawn) return "Журнал: герой отозвал приглашение. Марк не принимал решения о встрече.";
         if (Phase == DistrictPhase.Missed) return MarkRefused
@@ -244,7 +248,7 @@ public sealed class FirstDistrictEpisode
             : "В журнале осталась задержка, но имена стёрты. Память не пережила утро.";
     }
 
-    public (Vector3 position, string name) Objective(int day) => day > 1 ? (Trace, "Журнал у остановки") : Phase switch
+    public (Vector3 position, string name) Objective(int day) => day > 1 ? DistrictArchiveStory.Objective(day) : Phase switch
     {
         DistrictPhase.Routine => (Stop, "Лида"),
         DistrictPhase.RepairPlanned or DistrictPhase.DelayPlanned => (Signal, "Сигнал перехода"),
