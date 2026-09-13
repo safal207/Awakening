@@ -2,7 +2,9 @@ name: First Memory CI
 
 on:
   push:
-    branches: ["feat/first-memory-slice"]
+    branches:
+      - "feat/first-memory-slice"
+      - "feat/memory-anchor-persistence"
   workflow_dispatch:
 
 jobs:

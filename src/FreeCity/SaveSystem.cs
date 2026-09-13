@@ -7,8 +7,10 @@ using System.Text.Json;
 
 namespace Probuzhdenie.FreeCity;
 
-public static class SaveSystem
+public static partial class SaveSystem
 {
+    private const int CurrentSchemaVersion = 2;
+
     private static readonly string SaveDirectory = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
         "Probuzhdenie");
@@ -30,6 +32,7 @@ public static class SaveSystem
 
     private class SaveData
     {
+        public int SchemaVersion { get; set; }
         public int Seed { get; set; }
         public int Day { get; set; }
         public float Memory { get; set; }
@@ -46,6 +49,7 @@ public static class SaveSystem
         public int DailyTalkProgress { get; set; }
         public bool DailyObjectiveCompleted { get; set; }
         public List<int>? DailyTalkedNpcs { get; set; }
+        public MemoryPersistenceSnapshot? MemoryLedger { get; set; }
     }
 
     public static void Save(int seed, HeroProgress progress, AwarenessSystem awareness, float timeOfDay, IReadOnlyList<NpcCharacter>? npcs = null)
@@ -76,7 +80,7 @@ public static class SaveSystem
             SaveToPath(path, 515151, progress, awareness, 7.25f, DateTime.UtcNow, null);
             var overwritten = LoadFromPath(path);
 
-            bool ok =
+            bool coreOk =
                 loaded.seed == 424242 &&
                 loaded.progress.Day == 2 &&
                 Math.Abs(loaded.timeOfDay - 13.5f) < 0.001f &&
@@ -87,7 +91,11 @@ public static class SaveSystem
                 overwritten.seed == 515151 &&
                 Math.Abs(overwritten.timeOfDay - 7.25f) < 0.001f;
 
-            message = ok ? "Save/load self-test passed." : "Save/load self-test failed.";
+            bool memoryOk = RunMemoryPersistenceSelfTest(out string memoryMessage);
+            bool ok = coreOk && memoryOk;
+            message = ok
+                ? $"Save/load self-test passed. {memoryMessage}"
+                : $"Save/load self-test failed. Core={coreOk}; {memoryMessage}";
             return ok;
         }
         catch (Exception e)
@@ -110,6 +118,12 @@ public static class SaveSystem
 
     private static void SaveToPath(string path, int seed, HeroProgress progress, AwarenessSystem awareness, float timeOfDay, DateTime savedUtc, IReadOnlyList<NpcCharacter>? npcs)
     {
+        if (progress.SaveWritesBlocked)
+        {
+            Console.WriteLine("Save skipped: loaded save requires recovery before it can be overwritten.");
+            return;
+        }
+
         try
         {
             string? directory = Path.GetDirectoryName(path);
@@ -118,6 +132,7 @@ public static class SaveSystem
 
             var data = new SaveData
             {
+                SchemaVersion = CurrentSchemaVersion,
                 Seed = seed,
                 Day = progress.Day,
                 Memory = progress.Memory,
@@ -142,6 +157,7 @@ public static class SaveSystem
                 DailyTalkProgress = progress.DailyTalkProgress,
                 DailyObjectiveCompleted = progress.DailyObjectiveCompleted,
                 DailyTalkedNpcs = new List<int>(progress.DailyTalkedNpcs),
+                MemoryLedger = MemoryPersistence.Capture(progress.Ledger),
             };
 
             string json = JsonSerializer.Serialize(data, SaveOptions);
@@ -168,6 +184,22 @@ public static class SaveSystem
             progress.Restore(data.Day, data.Memory, data.Curiosity, data.Empathy, data.Agency, data.Courage);
             progress.LoadDiscoveredEggs(data.DiscoveredEggs);
             progress.LoadDailyObjective(data.DailyObjectiveDay, data.DailyTalkProgress, data.DailyObjectiveCompleted, data.DailyTalkedNpcs);
+
+            if (data.SchemaVersion > CurrentSchemaVersion || data.SchemaVersion < 0)
+            {
+                progress.SaveWritesBlocked = true;
+                Console.WriteLine($"Save schema {data.SchemaVersion} is not supported by this build; automatic writes are blocked.");
+            }
+            else
+            {
+                bool cleanMemory = MemoryPersistence.TryRestore(data.MemoryLedger, out MemoryLedger ledger);
+                progress.Ledger = ledger;
+                if (!cleanMemory)
+                {
+                    progress.SaveWritesBlocked = true;
+                    Console.WriteLine("Memory ledger was partially recovered; automatic writes are blocked to preserve the source save.");
+                }
+            }
 
             double minutesAway = Math.Max(0d, (DateTime.UtcNow - data.LastSavedUtc.ToUniversalTime()).TotalMinutes);
             double offlineMinutes = data.Awareness >= HeroProgress.OfflineGrowthAwarenessThreshold
