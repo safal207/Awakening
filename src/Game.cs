@@ -21,6 +21,7 @@ public class Game : GameWindow
         Ending,
         NewCycleConfirmation,
         SaveFailure,
+        LoadFailure,
     }
 
     private const string GameTitle = "Пробуждение";
@@ -46,6 +47,8 @@ public class Game : GameWindow
     private readonly string[] _newCycleItems = { "ОТМЕНА", "НАЧАТЬ ЗАНОВО" };
     private string _menuError = "";
     private string _saveWarning = "";
+    private string _loadNotice = "";
+    private readonly string[] _loadFailureItems = { "ПОВТОРИТЬ ЗАГРУЗКУ", "ВЫХОД" };
     private bool _allowUnsavedClose;
     private readonly string[] _saveFailureItems = { "ПОВТОРИТЬ СОХРАНЕНИЕ", "ВЫЙТИ БЕЗ СОХРАНЕНИЯ", "НАЗАД" };
     private readonly string[] _pauseMenuItems = { "ПРОДОЛЖИТЬ", "НАСТРОЙКИ", "ВЫХОД" };
@@ -136,49 +139,11 @@ public class Game : GameWindow
         GL.Uniform1(GL.GetUniformLocation(_shader,"sunDepth"),1);
 
 
-        int seed;
-        HeroProgress progress;
-        float timeOfDay;
-        float awareness;
-        List<SaveSystem.NpcSaveData>? npcData = null;
-
         if (_profileOptions != null)
         {
-            seed = 424242;
-            progress = new HeroProgress();
-            timeOfDay = 8f;
-            awareness = 0f;
-            _offlineGrowthMinutes = 0;
+            ReplaceCity(424242,new HeroProgress(),8f,0f,null,null);
         }
-        else
-        {
-            var save = SaveSystem.Load();
-            seed = save.seed;
-            progress = save.progress;
-            timeOfDay = save.timeOfDay;
-            awareness = save.awareness;
-            _offlineGrowthMinutes = save.offlineMinutes;
-            npcData = save.npcs;
-        }
-
-        _city = new CityRenderer(seed, progress);
-        _city.ShadowsEnabled = _profileOptions != null || _settings.Shadows;
-        _city.BuildGeometry();
-        _city.TimeOfDay = timeOfDay;
-        _city.Awareness.Restore(awareness);
-        _city.UpdateNpcs(0f);
-        if (npcData != null) _city.RestoreNpcs(npcData);
-
-        // Камера от 3-го лица: сзади героя
-        if (_city.Player != null)
-        {
-            _camYaw = _city.Player.Rotation - MathF.PI;
-            UpdateThirdPerson(0);
-            _cam.SnapToTarget();
-        }
-
-        _playerController = new PlayerController(_city, _input, _cam);
-        _interactionDetector = new InteractionDetector(_city);
+        else if (!TryLoadSavedCity()) return;
 
         if (_runtimeProfiler != null)
         {
@@ -192,6 +157,49 @@ public class Game : GameWindow
             Console.WriteLine($"Runtime profile started for {_profileOptions!.DurationSeconds:F0}s. Report: {_profileOptions.ReportPath}");
         }
 
+    }
+
+    private bool TryLoadSavedCity()
+    {
+        try
+        {
+            var save = SaveSystem.Load();
+            ReplaceCity(save.seed,save.progress,save.timeOfDay,save.awareness,save.npcs,save.player);
+            _offlineGrowthMinutes = save.offlineMinutes;
+            _loadNotice = save.notice;
+            _menuError = "";
+            _screen = GameScreen.MainMenu;
+            _menuIndex = 0;
+            return true;
+        }
+        catch (SaveLoadException e)
+        {
+            _menuError = e.Message;
+            _screen = GameScreen.LoadFailure;
+            _menuIndex = 0;
+            return false;
+        }
+    }
+
+    private void ReplaceCity(int seed, HeroProgress progress, float timeOfDay, float awareness,
+        List<SaveSystem.NpcSaveData>? npcs, PlayerSaveData? player)
+    {
+        var next = new CityRenderer(seed,progress) { ShadowsEnabled = _profileOptions != null || _settings.Shadows };
+        try
+        {
+            next.BuildGeometry();
+            next.TimeOfDay = timeOfDay;
+            next.Awareness.Restore(awareness);
+            next.RestoreNpcs(npcs);
+            next.RestorePlayer(player);
+            next.UpdateNpcs(0f);
+        }
+        catch { next.Dispose(); throw; }
+        _city?.Dispose();
+        _city = next;
+        _playerController = new PlayerController(next,_input,_cam);
+        _interactionDetector = new InteractionDetector(next);
+        SnapCameraBehindHero();
     }
 
     protected virtual void PollInput() => _input.Update();
@@ -431,6 +439,7 @@ public class Game : GameWindow
         GameScreen.Ending => _endingMenuItems,
         GameScreen.NewCycleConfirmation => _newCycleItems,
         GameScreen.SaveFailure => _saveFailureItems,
+        GameScreen.LoadFailure => _loadFailureItems,
         GameScreen.Settings => new[]
         {
             $"РАЗРЕШЕНИЕ  {_settings.Width}x{_settings.Height}",
@@ -445,6 +454,12 @@ public class Game : GameWindow
 
     private void SelectMenuItem()
     {
+        if (_screen == GameScreen.LoadFailure)
+        {
+            if (_menuIndex == 0) TryLoadSavedCity();
+            else Close();
+            return;
+        }
         if (_screen == GameScreen.SaveFailure)
         {
             if (_menuIndex == 0) Close();
@@ -594,6 +609,7 @@ public class Game : GameWindow
         _offlineGrowthMinutes = 0;
         _menuError = "";
         _saveWarning = "";
+        _loadNotice = "";
         StartGame();
     }
 
@@ -852,6 +868,7 @@ public class Game : GameWindow
             GameScreen.Ending => "ТЫ ПРОСНУЛСЯ",
             GameScreen.NewCycleConfirmation => "НАЧАТЬ С ПЕРВОГО УТРА?",
             GameScreen.SaveFailure => "СОХРАНЕНИЕ НЕ УДАЛОСЬ",
+            GameScreen.LoadFailure => "ПРОГРЕСС НЕ ЗАГРУЖЕН",
             _ => $"ДЕНЬ {_city?.Progress.Day ?? 1}",
         };
         DrawMenuText(heading, 0.08f, 0.27f, 0.0044f, 0.42f, dim);
@@ -861,6 +878,8 @@ public class Game : GameWindow
             DrawMenuText("ТЕКУЩИЙ ПРОГРЕСС ОСТАНЕТСЯ В КОПИИ.", 0.08f, 0.33f, 0.003f, 0.42f, warm);
         else if (_screen == GameScreen.SaveFailure)
             DrawMenuText("ПОСЛЕДНИЕ ИЗМЕНЕНИЯ НЕ ЗАПИСАНЫ.", 0.08f, 0.33f, 0.003f, 0.42f, warm);
+        else if (_screen == GameScreen.LoadFailure)
+            DrawMenuText("НОВЫЙ ЦИКЛ НЕ СОЗДАН.", 0.08f, 0.33f, 0.003f, 0.42f, warm);
         else if (_screen == GameScreen.MainMenu && _offlineGrowthMinutes >= 1)
             DrawMenuText($"ГЕРОЙ РОС {Math.Ceiling(_offlineGrowthMinutes)} МИН",
                 0.08f, 0.33f, 0.003f, 0.42f, warm);
@@ -877,10 +896,14 @@ public class Game : GameWindow
                 0.37f / Math.Max(0.001f, _ui.MeasureText(items[i], 1)));
             _ui.Text(items[i], 0.104f, y + (height - size * 7) * 0.5f, size, selected ? text : dim);
         }
-        DrawMenuText("ГЕРОЙ", 0.60f, 0.87f, 0.0035f, 0.30f, dim);
+        if (_city?.Player != null)
+        {
+            DrawMenuText("ГЕРОЙ", 0.60f, 0.87f, 0.0035f, 0.30f, dim);
+            _ui.Rect(0.60f, 0.92f, 0.29f, 0.002f, accent);
+        }
         if (!string.IsNullOrEmpty(_menuError)) DrawMenuText(_menuError,0.08f,0.86f,0.003f,0.42f,warm);
         else if (!string.IsNullOrEmpty(_saveWarning)) DrawMenuText(_saveWarning,0.08f,0.86f,0.003f,0.42f,warm);
-        _ui.Rect(0.60f, 0.92f, 0.29f, 0.002f, accent);
+        else if (!string.IsNullOrEmpty(_loadNotice)) DrawMenuText(_loadNotice,0.08f,0.86f,0.003f,0.42f,warm);
         _ui.Render(_shader, _modelL, _viewL, _projL, _colorL, _ambL, _lightL, _fogColL);
 
         if (_city?.Player != null)

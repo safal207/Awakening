@@ -7,7 +7,7 @@ dotnet run --project tests/GraphicsSmoke/GraphicsSmoke.csproj -c Release
 ```
 
 The test opens the real game window, checks scripted menu clicks and portrait
-rotation, renders twenty-four scenes, checks portrait pixels and GL errors, compares
+rotation, renders twenty-six scenes, checks portrait pixels and GL errors, compares
 shadow-enabled/disabled pixels, then minimizes/restores the window.
 Images go to `artifacts/manhattan-refresh`.
 Pass `--hero-qa` to write the same scenes, including the turnaround and face
@@ -20,6 +20,8 @@ Six departure captures cover the parked tram, Lida's dispatch gesture, movement,
 braking for the player, resuming and the cleared stop. Pixel checks compare the
 tram with/without drawing at its projected world position. The probe also checks
 that its VBO and total allocated geometry bytes stay stable during departure.
+Two more captures cover failed loading without a fake player preview and a
+successful recovery notice in a tall window.
 
 The `.cs.txt` extension keeps the harness outside the root project's default C#
 glob. This project explicitly compiles it and references the game project.
@@ -40,10 +42,15 @@ advance to the second morning. The repair route pauses and reloads during the
 animated tram departure. It also checks new-cycle cancellation, a backup
 of the previous cycle, failed writes, the failed-close guard, autosave recovery
 after resuming play and deliberate exit without saving.
+The eight routes also cover outdoor position/orientation, an interior saved and
+reopened with a real mesh, subsequent movement/exit, backup recovery, and retry
+after an initially unrecoverable load. Closing the failed-load screen must leave
+both invalid files unchanged. No new world may be created on that error path.
 
 Saves and the result report are isolated under `artifacts/playthrough-<UTC time>`.
 The player's normal save is not read or written. IO errors in the `newcycle`
-and `savefailure` fixtures are intentional; the final result must still be PASS.
+and `savefailure` fixtures and parsing errors in `loadfailure` are intentional;
+the final result must still be PASS.
 The probe has a watchdog and exits nonzero if an assertion fails or the window
 is closed before completion. This verifies scripted gameplay, not native key
 timing, human comprehension or a performance budget.

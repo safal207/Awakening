@@ -88,7 +88,38 @@ public class CityRenderer : IDisposable
         }
     }
 
-    public bool SaveGame() => SaveSystem.Save(_seed, _progress, _awareness, _timeOfDay, _npcs);
+    public bool SaveGame() => SaveSystem.Save(_seed, _progress, _awareness, _timeOfDay, _npcs,
+        player: _player == null ? null : PlayerSaveData.Capture(_player, _insideBlock));
+
+    public void RestorePlayer(PlayerSaveData? saved)
+    {
+        if (saved == null || _player == null) return;
+        saved.Validate(_seed);
+        DeleteMesh(ref _interiorVao,ref _interiorVbo,ref _interiorCount,ref _interiorGpuBytes);
+        _insideBlock = saved.FindInterior(_blocks);
+        _inside = _insideBlock.HasValue;
+        Vector3 position = saved.Position;
+        if (_inside) position.Y = 0f;
+        else
+        {
+            const float min = -CityGenerator.CityRadius * CityGenerator.CellSize - CityGenerator.RoadWidth + 1;
+            const float max = (CityGenerator.CityRadius + 1) * CityGenerator.CellSize - 1;
+            position.X = Math.Clamp(position.X,min,max);
+            position.Z = Math.Clamp(position.Z,min,max);
+            for (int i = 0; i < 4; i++)
+            {
+                position = ClampToWalkable(position,0.3f);
+                foreach (var npc in _npcs)
+                    if (npc != _player && Vector2.DistanceSquared(position.Xz,npc.Position.Xz) < 0.0001f)
+                        position.X += 0.7f;
+                position = AdjustForNpcCollision(position,0.3f,_player);
+            }
+        }
+        _player.Position = ClampPlayerToWalkable(position,0.3f);
+        _player.Rotation = _player.TargetRotation = saved.Yaw;
+        _player.Velocity = Vector3.Zero;
+        _player.AnimBlend = 0f;
+    }
 
     public void RestoreNpcs(List<SaveSystem.NpcSaveData>? npcData)
     {
@@ -1034,6 +1065,8 @@ public class CityRenderer : IDisposable
 
     public void Render(CityRenderContext context, ref Matrix4 view, ref Matrix4 proj, Vector3 fogCol)
     {
+        if (_inside && _interiorCount == 0 && _insideBlock is CityBlock interior)
+            BuildInteriorGeometry(interior);
         var districtState = (_progress.DistrictEpisode.Phase, _progress.Day);
         if (!_inside && _districtMeshState != districtState)
         {

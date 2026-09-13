@@ -134,7 +134,9 @@ sealed class VisualProbe : Game
         (1280,720,"Playing","tram-moving"),
         (1280,720,"Playing","tram-blocked"),
         (1280,720,"Playing","tram-resumed"),
-        (960,540,"Playing","tram-gone-960")
+        (960,540,"Playing","tram-gone-960"),
+        (960,540,"LoadFailure","load-failure-960"),
+        (960,900,"MainMenu","menu-recovered-tall")
     };
     public VisualProbe(string output) : base(new RuntimeProfileOptions {
         DurationSeconds=600, ReportPath=output+"/visual-profile.json" }) { Output=output; }
@@ -187,7 +189,14 @@ sealed class VisualProbe : Game
         field.SetValue(this,Enum.Parse(field.FieldType,shot.Screen));
         Set("_heroPreviewTime",0f);
         Set("_heroPreviewYaw",0f);
-        if (stage >= 18) { ConfigureDeparture(); return; }
+        if (stage >= 18 && stage <= 23) { ConfigureDeparture(); return; }
+        if(stage>=24)
+        {
+            Set("_menuIndex",0); Set("_saveWarning","");
+            Set("_menuError",stage==24?"Не удалось загрузить прогресс. Исходные файлы сохранены.":"");
+            Set("_loadNotice",stage==25?"Прогресс восстановлен из резервной копии.":"");
+            return;
+        }
         if (stage >= 11 && stage <= 15) { ConfigureDistrict(); return; }
         if (stage >= 16) Set("_menuIndex",0);
         if (stage == 17) Set("_saveWarning","Прогресс не сохранён. Запись будет повторена.");
@@ -351,12 +360,18 @@ sealed class VisualProbe : Game
         GL.Viewport(0,0,ClientSize.X,ClientSize.Y);
         GL.ClearColor(.055f,.06f,.062f,1);
         GL.Clear(ClearBufferMask.ColorBufferBit|ClearBufferMask.DepthBufferBit);
-        if(stage < 4 || stage is 16 or 17) Call("RenderMenu"); else if(stage==4 || stage==10) DrawTurnaround(stage==10); else DrawWorld();
+        if(stage==24)
+        {
+            var city=Get("_city");
+            try { Set("_city",null!); Call("RenderMenu"); }
+            finally { Set("_city",city); }
+        }
+        else if(stage < 4 || stage is 16 or 17 or 25) Call("RenderMenu"); else if(stage==4 || stage==10) DrawTurnaround(stage==10); else DrawWorld();
         GL.Finish();
         if(++frame >= 4)
         {
             if(stage==5) CheckShadows();
-            if(stage>=18) CheckTramRender();
+            if(stage>=18 && stage<=23) CheckTramRender();
             var error=GL.GetError();
             if(error!=ErrorCode.NoError) throw new Exception("GL error: "+error);
             SavePng(Output+"/"+shots[stage].Name+".png",ClientSize.X,ClientSize.Y);

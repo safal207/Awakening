@@ -4,12 +4,13 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
+using System.Threading;
 
 namespace Probuzhdenie.FreeCity;
 
-public static class SaveSystem
+public static partial class SaveSystem
 {
-    private const int CurrentSaveVersion = 4;
+    private const int CurrentSaveVersion = 5;
     private static readonly string SaveDirectory = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Probuzhdenie");
     internal static string SaveFilePath { get; set; } = Path.Combine(SaveDirectory, "save.json");
@@ -31,7 +32,7 @@ public static class SaveSystem
     {
         public int Version { get; set; }
         public int Seed { get; set; }
-        public int Day { get; set; }
+        public int Day { get; set; } = 1;
         public float Memory { get; set; }
         public float Curiosity { get; set; }
         public float Empathy { get; set; }
@@ -39,7 +40,7 @@ public static class SaveSystem
         public float Courage { get; set; }
         public float Awareness { get; set; }
         public List<string> DiscoveredEggs { get; set; } = new();
-        public float TimeOfDay { get; set; }
+        public float TimeOfDay { get; set; } = 8f;
         public DateTime LastSavedUtc { get; set; } = DateTime.UtcNow;
         public List<NpcSaveData>? Npcs { get; set; }
         public int DailyObjectiveDay { get; set; } = 1;
@@ -50,13 +51,14 @@ public static class SaveSystem
         public List<MemoryAnchorSaveData> MemoryAnchors { get; set; } = new();
         public List<string> RewardedDialogueChoices { get; set; } = new();
         public DistrictEpisodeSaveData? DistrictEpisode { get; set; }
+        public PlayerSaveData? Player { get; set; }
     }
 
     public static bool Save(int seed, HeroProgress progress, AwarenessSystem awareness, float timeOfDay,
-        IReadOnlyList<NpcCharacter>? npcs = null, MemoryLedger? memoryLedger = null)
+        IReadOnlyList<NpcCharacter>? npcs = null, MemoryLedger? memoryLedger = null, PlayerSaveData? player = null)
     {
         return SaveToPath(SaveFilePath, seed, progress, awareness, timeOfDay, DateTime.UtcNow, npcs,
-            memoryLedger ?? MemoryRuntime.Current);
+            memoryLedger ?? MemoryRuntime.Current, player);
     }
 
     public static bool TryBackupForNewCycle(out string error)
@@ -81,7 +83,7 @@ public static class SaveSystem
     }
 
     public static (int seed, HeroProgress progress, float timeOfDay, float awareness, double offlineMinutes,
-        List<NpcSaveData>? npcs, MemoryLedger memoryLedger) Load()
+        List<NpcSaveData>? npcs, MemoryLedger memoryLedger, PlayerSaveData? player, string notice) Load()
     {
         var loaded = LoadFromPath(SaveFilePath);
         MemoryRuntime.Replace(loaded.memoryLedger);
@@ -152,7 +154,7 @@ public static class SaveSystem
         }
         finally
         {
-            try { if (File.Exists(path)) File.Delete(path); }
+            try { File.Delete(path); File.Delete(path + ".bak"); }
             catch { }
         }
     }
@@ -293,7 +295,7 @@ public static class SaveSystem
             File.WriteAllText(path, JsonSerializer.Serialize(new { Version = CurrentSaveVersion + 1 }), SaveEncoding);
             bool refusedFutureVersion = false;
             try { LoadFromPath(path); }
-            catch (InvalidDataException) { refusedFutureVersion = true; }
+            catch (SaveLoadException) { refusedFutureVersion = true; }
             Require(refusedFutureVersion, "do not overwrite a newer save schema");
             message = "Memory save/load tests passed (both outcomes, 20 mornings, replay and legacy saves).";
             return true;
@@ -307,13 +309,13 @@ public static class SaveSystem
         {
             MemoryRuntime.Replace(previousLedger);
             MemoryRuntime.HeroId = previousHero;
-            try { if (File.Exists(path)) File.Delete(path); }
+            try { File.Delete(path); File.Delete(path + ".bak"); }
             catch { }
         }
     }
 
     private static bool SaveToPath(string path, int seed, HeroProgress progress, AwarenessSystem awareness,
-        float timeOfDay, DateTime savedUtc, IReadOnlyList<NpcCharacter>? npcs, MemoryLedger? memoryLedger = null)
+        float timeOfDay, DateTime savedUtc, IReadOnlyList<NpcCharacter>? npcs, MemoryLedger? memoryLedger = null, PlayerSaveData? player = null)
     {
         try
         {
@@ -351,9 +353,18 @@ public static class SaveSystem
                 MemoryAnchors = memoryLedger?.Anchors.Select(MemoryAnchorSaveData.From).ToList() ?? new List<MemoryAnchorSaveData>(),
                 RewardedDialogueChoices = progress.RewardedDialogueChoices.ToList(),
                 DistrictEpisode = progress.DistrictEpisode.Snapshot(),
+                Player = player,
             };
 
+            ValidateData(data);
             string json = JsonSerializer.Serialize(data, SaveOptions);
+            if (SaveEncoding.GetByteCount(json) > MaxSaveBytes) throw new InvalidDataException("Save exceeds the size limit.");
+            var previous = ReadCandidate(path);
+            try { ReadCandidate(path + ".bak"); }
+            catch (Exception e) when (e is JsonException or InvalidDataException or DecoderFallbackException) { }
+            // Publish a validated fallback first; a failed primary replace must
+            // never turn the only backup into a corrupt or partial document.
+            WriteAllTextAtomically(path + ".bak", previous?.json ?? json);
             WriteAllTextAtomically(path, json);
             return true;
         }
@@ -365,55 +376,33 @@ public static class SaveSystem
     }
 
     private static (int seed, HeroProgress progress, float timeOfDay, float awareness, double offlineMinutes,
-        List<NpcSaveData>? npcs, MemoryLedger memoryLedger) LoadFromPath(string path)
+        List<NpcSaveData>? npcs, MemoryLedger memoryLedger, PlayerSaveData? player, string notice) ConvertSave(SaveData data, string notice)
     {
-        if (!File.Exists(path))
-            return (Environment.TickCount, new HeroProgress(), 8f, 0f, 0d, null, new MemoryLedger());
+        var progress = new HeroProgress();
+        progress.Restore(data.Day, data.Memory, data.Curiosity, data.Empathy, data.Agency, data.Courage);
+        progress.LoadDiscoveredEggs(data.DiscoveredEggs);
+        progress.LoadDialogueRewards(data.RewardedDialogueChoices);
+        progress.LoadDailyObjective(data.DailyObjectiveDay, data.DailyTalkProgress, data.DailyObjectiveCompleted, data.DailyTalkedNpcs);
 
-        try
+        var ledger = new MemoryLedger();
+        var anchors = data.MemoryAnchors.Select(a => a.ToAnchor()).ToList();
+        ledger.Restore(data.MemoryEvents, anchors);
+        progress.DistrictEpisode.Restore(data.DistrictEpisode, ledger);
+        if (data.DistrictEpisode == null && progress.DistrictEpisode.Phase == DistrictPhase.Routine)
         {
-            string json = File.ReadAllText(path);
-            var data = JsonSerializer.Deserialize<SaveData>(json, LoadOptions);
-            if (data == null)
-                return (Environment.TickCount, new HeroProgress(), 8f, 0f, 0d, null, new MemoryLedger());
-            if (data.Version > CurrentSaveVersion)
-                throw new InvalidDataException($"Save version {data.Version} is newer than supported version {CurrentSaveVersion}.");
-
-            var progress = new HeroProgress();
-            progress.Restore(data.Day, data.Memory, data.Curiosity, data.Empathy, data.Agency, data.Courage);
-            progress.LoadDiscoveredEggs(data.DiscoveredEggs);
-            progress.LoadDialogueRewards(data.RewardedDialogueChoices);
-            progress.LoadDailyObjective(data.DailyObjectiveDay, data.DailyTalkProgress, data.DailyObjectiveCompleted, data.DailyTalkedNpcs);
-
-            var ledger = new MemoryLedger();
-            var anchors = (data.MemoryAnchors ?? new List<MemoryAnchorSaveData>()).Select(a => a.ToAnchor()).ToList();
-            ledger.Restore(data.MemoryEvents, anchors);
-            progress.DistrictEpisode.Restore(data.DistrictEpisode, ledger);
-            if (data.DistrictEpisode == null && progress.DistrictEpisode.Phase == DistrictPhase.Routine)
-            {
-                bool delay = progress.RewardedDialogueChoices.Contains("npc:1:action:district1.lida.delay");
-                bool repair = progress.RewardedDialogueChoices.Contains("npc:1:action:district1.lida.repair");
-                if (delay || repair) progress.DistrictEpisode.Plan(delay, progress.Day);
-            }
-            if (progress.Day > 1) progress.DistrictEpisode.EndDay();
-
-            double minutesAway = Math.Max(0d, (DateTime.UtcNow - data.LastSavedUtc.ToUniversalTime()).TotalMinutes);
-            double offlineMinutes = data.Awareness >= HeroProgress.OfflineGrowthAwarenessThreshold
-                ? progress.ApplyOfflineGrowth(minutesAway)
-                : 0d;
-
-            return (data.Seed == 0 ? Environment.TickCount : data.Seed, progress, data.TimeOfDay,
-                data.Awareness, offlineMinutes, data.Npcs, ledger);
+            bool delay = progress.RewardedDialogueChoices.Contains("npc:1:action:district1.lida.delay");
+            bool repair = progress.RewardedDialogueChoices.Contains("npc:1:action:district1.lida.repair");
+            if (delay || repair) progress.DistrictEpisode.Plan(delay, progress.Day);
         }
-        catch (InvalidDataException)
-        {
-            throw;
-        }
-        catch (Exception e)
-        {
-            Console.WriteLine($"Failed to load game: {e}");
-            return (Environment.TickCount, new HeroProgress(), 8f, 0f, 0d, null, new MemoryLedger());
-        }
+        if (progress.Day > 1) progress.DistrictEpisode.EndDay();
+
+        double minutesAway = Math.Max(0d, (DateTime.UtcNow - data.LastSavedUtc.ToUniversalTime()).TotalMinutes);
+        double offlineMinutes = data.Awareness >= HeroProgress.OfflineGrowthAwarenessThreshold
+            ? progress.ApplyOfflineGrowth(minutesAway)
+            : 0d;
+
+        return (data.Seed == 0 && data.Player == null ? Environment.TickCount : data.Seed, progress, data.TimeOfDay,
+            data.Awareness, offlineMinutes, data.Npcs, ledger, data.Player, notice);
     }
 
     private static void WriteAllTextAtomically(string path, string contents)
@@ -422,14 +411,35 @@ public static class SaveSystem
         string tempPath = Path.Combine(directory, $".{Path.GetFileName(path)}.{Guid.NewGuid():N}.tmp");
         try
         {
-            File.WriteAllText(tempPath, contents, SaveEncoding);
-            if (File.Exists(path)) File.Replace(tempPath, path, null);
+            using (var stream = new FileStream(tempPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+            {
+                using var writer = new StreamWriter(stream, SaveEncoding, leaveOpen: true);
+                writer.Write(contents);
+                writer.Flush();
+                stream.Flush(flushToDisk: true);
+            }
+            if (File.Exists(path)) RetryFileReplace(() => File.Replace(tempPath, path, null), Thread.Sleep);
             else File.Move(tempPath, path);
         }
         finally
         {
             try { if (File.Exists(tempPath)) File.Delete(tempPath); }
             catch { }
+        }
+    }
+
+    private static void RetryFileReplace(Action replace, Action<int> delay)
+    {
+        // Windows error 1175 leaves both names intact, so the same flushed file
+        // can be retried. Other errors may change file state and must propagate.
+        const int unableToRemoveReplaced = unchecked((int)0x80070497);
+        for (int attempt = 0; ; attempt++)
+        {
+            try { replace(); return; }
+            catch (IOException e) when (e.HResult == unableToRemoveReplaced && attempt < 2)
+            {
+                delay(20 * (attempt + 1));
+            }
         }
     }
 }

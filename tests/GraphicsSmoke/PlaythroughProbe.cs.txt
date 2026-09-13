@@ -15,6 +15,7 @@ sealed class PlaythroughProbe : Game
 {
     const BindingFlags Private = BindingFlags.Instance | BindingFlags.NonPublic;
     const double Step = 1.0 / 30;
+    static readonly string[] Routes = { "repair", "delay", "newcycle", "savefailure", "location", "interior", "recovery", "loadfailure" };
     readonly string route;
     readonly bool resume;
     readonly Stopwatch watchdog = new();
@@ -36,10 +37,16 @@ sealed class PlaythroughProbe : Game
         string original=(string)pathProperty.GetValue(null)!;
         try
         {
-            foreach (string route in interactive ? new[]{"interactive"} : new[]{"repair","delay","newcycle","savefailure"})
+            foreach (string route in interactive ? new[]{"interactive"} : Routes)
             {
                 string path=Path.Combine(root,route+".json");
                 File.WriteAllText(path,JsonSerializer.Serialize(new {Version=3,Seed=424242,Day=route=="newcycle"?7:1,Memory=route=="newcycle"?41f:0f,TimeOfDay=8f,LastSavedUtc=DateTime.UtcNow}));
+                if (route is "recovery" or "loadfailure")
+                {
+                    File.Copy(path,path+".bak");
+                    File.WriteAllText(path,"broken primary");
+                    if(route=="loadfailure")File.WriteAllText(path+".bak","broken backup");
+                }
                 pathProperty.SetValue(null,path);
                 Console.WriteLine("Isolated playtest save: "+path);
                 if (interactive) { using var game=new Game(); game.Run(); return; }
@@ -49,10 +56,12 @@ sealed class PlaythroughProbe : Game
                     game.Run();
                     if (game.Failure != null) throw new Exception(route+" playthrough failed",game.Failure);
                     if (!game.Finished) throw new Exception("Playthrough interrupted before completion");
+                    if(route=="loadfailure" && !resume && (File.ReadAllText(path)!="broken primary" || File.ReadAllText(path+".bak")!="broken backup"))
+                        throw new Exception("Failed-load exit modified save files");
                 }
                 Console.WriteLine("PLAYTHROUGH PASS: "+route+(route=="savefailure" ? " with failed-close guard and autosave recovery" : " with window recreation and save reload"));
             }
-            File.WriteAllText(Path.Combine(root,"result.json"),JsonSerializer.Serialize(new {Result="PASS",Routes=new[]{"repair","delay","newcycle","savefailure"},ReloadedRoutes=new[]{"repair","delay","newcycle"},Input="scripted keyboard state through Game update; no native key hold"}));
+            File.WriteAllText(Path.Combine(root,"result.json"),JsonSerializer.Serialize(new {Result="PASS",Routes,ReloadedRoutes=Routes.Where(r=>r!="savefailure").ToArray(),Input="scripted keyboard state through Game update; no native key hold"}));
         }
         finally { pathProperty.SetValue(null,original); MemoryRuntime.Reset(); }
     }
@@ -81,7 +90,7 @@ sealed class PlaythroughProbe : Game
     {
         try
         {
-            if (watchdog.Elapsed.TotalSeconds>150) throw new Exception("Playthrough watchdog: "+City.Progress.DistrictEpisode.Phase);
+            if (watchdog.Elapsed.TotalSeconds>150) throw new Exception("Playthrough watchdog: "+Get("_screen"));
             if (script == null || !script.MoveNext()) { Finished=true; Close(); return; }
             keys=script.Current;
             base.OnUpdateFrame(new FrameEventArgs(Step));
@@ -98,7 +107,18 @@ sealed class PlaythroughProbe : Game
 
     IEnumerable<Keys[]> Press(Keys key) { yield return new[]{key}; yield return Array.Empty<Keys>(); }
     IEnumerable<Keys[]> Wait(int frames) { for (int i=0;i<frames;i++) yield return Array.Empty<Keys>(); }
-    void Require(bool ok,string message) { if(!ok) throw new Exception(message+"; player="+City.Player!.Position+"; phase="+City.Progress.DistrictEpisode.Phase); }
+    void Require(bool ok,string message) { if(!ok) throw new Exception(message+"; screen="+Get("_screen")); }
+
+    string SavePath => (string)typeof(SaveSystem).GetProperty("SaveFilePath",BindingFlags.Static|BindingFlags.NonPublic)!.GetValue(null)!;
+
+    void CheckSavedPosition()
+    {
+        using var json=JsonDocument.Parse(File.ReadAllText(SavePath));
+        var saved=json.RootElement.GetProperty("Player");
+        Vector3 position=new(saved.GetProperty("X").GetSingle(),saved.GetProperty("Y").GetSingle(),saved.GetProperty("Z").GetSingle());
+        Require(Vector3.Distance(position,City.Player!.Position)<.04f,"load lost player position");
+        Require(Math.Abs(saved.GetProperty("Yaw").GetSingle()-City.Player.Rotation)<.01f,"load lost player heading");
+    }
 
     IEnumerable<Keys[]> Walk(Vector3 target,string label)
     {
@@ -135,6 +155,67 @@ sealed class PlaythroughProbe : Game
     IEnumerable<Keys[]> Play()
     {
         Console.WriteLine("Playthrough: "+route+" resume="+resume);
+        if(route=="loadfailure")
+        {
+            Require(Get("_screen").ToString()=="LoadFailure" && Get("_city")==null,"invalid saves created a playable new world");
+            if(!resume)
+            {
+                foreach(var k in Press(Keys.Enter))yield return k;
+                Require(Get("_screen").ToString()=="LoadFailure","retry overwrote broken saves");
+                foreach(var k in Press(Keys.Down))yield return k;
+                Finished=true;
+                foreach(var k in Press(Keys.Enter))yield return k;
+                yield break;
+            }
+            File.WriteAllText(SavePath+".bak",JsonSerializer.Serialize(new {Version=3,Seed=424242,Day=6,Memory=17f,TimeOfDay=8f}));
+            foreach(var k in Press(Keys.Enter))yield return k;
+            Require(Get("_screen").ToString()=="MainMenu" && City.Progress.Day==6 && City.Progress.Memory==17,"retry failed to recover supplied backup");
+            foreach(var k in Press(Keys.Enter))yield return k;
+            foreach(var k in Wait(10))yield return k;
+            yield break;
+        }
+        if(route=="recovery")
+        {
+            Require(Get("_screen").ToString()=="MainMenu" && City.Progress.Day==1,"backup could not be played");
+            Require(((string)Get("_loadNotice")).Length>0 != resume,"recovery notice missing or repeated after normal load");
+            foreach(var k in Press(Keys.Enter))yield return k;
+            foreach(var k in Wait(10))yield return k;
+            yield break;
+        }
+        if(route is "location" or "interior")
+        {
+            if(resume)
+            {
+                CheckSavedPosition();
+                Require(City.IsInside==(route=="interior"),"load lost interior state");
+            }
+            foreach(var k in Press(Keys.Enter))yield return k;
+            if(route=="location")
+            {
+                foreach(var k in Walk(new Vector3(11.5f,.12f,resume?6f:9f),"saved street position"))yield return k;
+            }
+            else if(!resume)
+            {
+                var block=City.Blocks.Where(b=>b.X==0 && b.Z!=0 && b.Type is not (BuildingType.Tree or BuildingType.Lamp)).OrderBy(b=>Math.Abs(b.Z)).First();
+                foreach(var k in Walk(new Vector3(11.5f,.12f,block.Z+11.5f),"door sidewalk"))yield return k;
+                foreach(var k in Walk(new Vector3(block.X+5,.12f,block.Z+11.5f),"building door"))yield return k;
+                foreach(var k in Press(Keys.E))yield return k;
+                Require(City.IsInside,"could not enter building through interaction");
+                foreach(var k in Walk(new Vector3(block.X+5,0,block.Z+5),"interior center"))yield return k;
+            }
+            else
+            {
+                var block=City.InsideBlock!.Value;
+                foreach(var k in Wait(3))yield return k;
+                Require((int)typeof(CityRenderer).GetField("_interiorCount",Private)!.GetValue(City)!>0,"restored interior mesh was not rendered");
+                foreach(var k in Walk(new Vector3(block.X+6,0,block.Z+6),"movement after interior load"))yield return k;
+                foreach(var k in Press(Keys.E))yield return k;
+                Require(!City.IsInside,"could not leave restored interior");
+            }
+            foreach(var k in Press(Keys.Escape))yield return k;
+            Require(Get("_screen").ToString()=="PauseMenu","position save did not reach pause");
+            yield break;
+        }
         if(route=="savefailure")
         {
             foreach(var k in Press(Keys.Enter))yield return k;

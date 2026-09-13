@@ -5,8 +5,10 @@ using Probuzhdenie.FreeCity;
 if (args.Length > 0 && args[0] == "--self-test")
 {
     bool ok = SaveSystem.RunSelfTest(out string message);
+    bool recoveryOk = SaveSystem.RunRecoveryTests(out string recoveryMessage);
     Console.WriteLine(message);
-    Environment.Exit(ok ? 0 : 1);
+    Console.WriteLine(recoveryMessage);
+    Environment.Exit(ok && recoveryOk ? 0 : 1);
 }
 
 if (args.Length > 0 && args[0] == "--functional-test")
