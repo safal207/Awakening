@@ -18,6 +18,7 @@ if (args.Length > 0 && args[0] == "--functional-test")
     bool ledgerOk = MemoryLedgerSelfTest.Run(out string ledgerMessage);
     bool integrationOk = MemoryIntegrationTests.Run(out string integrationMessage);
     bool roundTripOk = SaveSystem.RunMemoryRoundTripTest(out string roundTripMessage);
+    bool districtOk = DistrictEpisodeTests.Run(out string districtMessage);
     Console.WriteLine(functionalMessage);
     Console.WriteLine(memoryMessage);
     Console.WriteLine(sverkaMessage);
@@ -25,7 +26,8 @@ if (args.Length > 0 && args[0] == "--functional-test")
     Console.WriteLine(ledgerMessage);
     Console.WriteLine(integrationMessage);
     Console.WriteLine(roundTripMessage);
-    Environment.Exit(functionalOk && memoryOk && sverkaOk && storyOk && ledgerOk && integrationOk && roundTripOk ? 0 : 1);
+    Console.WriteLine(districtMessage);
+    Environment.Exit(functionalOk && memoryOk && sverkaOk && storyOk && ledgerOk && integrationOk && roundTripOk && districtOk ? 0 : 1);
 }
 
 if (args.Length == 1 && args[0] == "--memory-test")

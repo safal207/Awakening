@@ -23,8 +23,9 @@ public static class FirstDistrictStoryTests
         MemoryRuntime.Reset();
         MemoryRuntime.HeroId = 0;
         var progress = new HeroProgress();
-        var lida = StoryNpc(1, FirstDistrictStory.LidaName);
-        var mark = StoryNpc(2, FirstDistrictStory.MarkName);
+        var city = new CityRenderer(424242, progress);
+        var lida = city.Npcs[1];
+        var mark = city.Npcs[2];
 
         if (!FirstDistrictStory.TryGetDialogue(lida, progress, out _, out var lidaChoices) || lidaChoices.Length < 1)
         {
@@ -32,6 +33,7 @@ public static class FirstDistrictStoryTests
             return false;
         }
         lida.ApplyChoice(lidaChoices[0], progress);
+        ArrangeMeeting(city);
 
         var candidate = MemoryRuntime.Current.FindAnchor(FirstDistrictStory.MeetingEventId);
         if (candidate == null || candidate.Status != MemoryAnchorStatus.Candidate)
@@ -73,12 +75,14 @@ public static class FirstDistrictStoryTests
         MemoryRuntime.Reset();
         MemoryRuntime.HeroId = 0;
         var progress = new HeroProgress();
-        var lida = StoryNpc(1, FirstDistrictStory.LidaName);
-        var mark = StoryNpc(2, FirstDistrictStory.MarkName);
-        mark.Trust = 0f;
+        var city = new CityRenderer(424242, progress);
+        var lida = city.Npcs[1];
+        var mark = city.Npcs[2];
 
         FirstDistrictStory.TryGetDialogue(lida, progress, out _, out var lidaChoices);
         lida.ApplyChoice(lidaChoices[0], progress);
+        ArrangeMeeting(city);
+        mark.Trust = 0f;
         FirstDistrictStory.TryGetDialogue(mark, progress, out _, out var markChoices);
         mark.ApplyChoice(markChoices[0], progress);
 
@@ -101,13 +105,21 @@ public static class FirstDistrictStoryTests
         return ok;
     }
 
-    private static NpcCharacter StoryNpc(int id, string name)
+    internal static void ArrangeMeeting(CityRenderer city)
     {
-        var npc = new NpcCharacter(Vector3.Zero, Vector3.Zero, 9000 + id)
+        var episode = city.Progress.DistrictEpisode;
+        if (episode.Phase == DistrictPhase.Routine) episode.Plan(true, city.Progress.Day);
+        city.Player!.Position = FirstDistrictEpisode.Signal;
+        city.InteractWithDistrict(DistrictInteraction.Signal);
+        city.Npcs[2].Trust = 10f;
+        city.Npcs[2].Friendliness = 20f;
+        FirstDistrictStory.TryGetDialogue(city.Npcs[2], city.Progress, out _, out var choices);
+        city.Npcs[2].ApplyChoice(choices[0], city.Progress);
+        city.Player.Position = FirstDistrictEpisode.Stop + new Vector3(0,0,-2);
+        for (int i = 0; i < 180; i++)
         {
-            Id = id,
-            Name = name,
-        };
-        return npc;
+            city.AdvanceDayClock(0.1f);
+            city.UpdateDistrict(0.1f);
+        }
     }
 }

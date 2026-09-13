@@ -114,7 +114,12 @@ sealed class VisualProbe : Game
         (1280,720,"Playing","city-night"),
         (1280,720,"Playing","city-park"),
         (1280,720,"Playing","hero-interior"),
-        (900,900,"MainMenu","hero-face")
+        (900,900,"MainMenu","hero-face"),
+        (1280,720,"Playing","district-signal"),
+        (960,900,"Playing","district-dialogue-tall"),
+        (1280,720,"Playing","district-meeting"),
+        (1280,720,"Playing","district-morning"),
+        (960,540,"Playing","district-repair")
     };
     public VisualProbe(string output) : base(new RuntimeProfileOptions {
         DurationSeconds=600, ReportPath=output+"/visual-profile.json" }) { Output=output; }
@@ -167,6 +172,7 @@ sealed class VisualProbe : Game
         field.SetValue(this,Enum.Parse(field.FieldType,shot.Screen));
         Set("_heroPreviewTime",0f);
         Set("_heroPreviewYaw",0f);
+        if (stage >= 11) { ConfigureDistrict(); return; }
         if(stage >= 5 && stage < 10)
         {
             var city=(CityRenderer)Get("_city");
@@ -197,6 +203,60 @@ sealed class VisualProbe : Game
             typeof(Game).GetMethod("UpdateThirdPerson",Private)!.Invoke(this,new object[]{0f});
             city.UpdateNpcs(0);
         }
+    }
+    void ConfigureDistrict()
+    {
+        var city = (CityRenderer)Get("_city");
+        if (city.IsInside) city.ExitInterior();
+        if (stage == 11 || stage == 15)
+        {
+            MemoryRuntime.Reset();
+            city.Progress.Restore(1,0,0,0,0,0);
+            city.Progress.LoadDialogueRewards(Array.Empty<string>());
+            city.Progress.DistrictEpisode.Restore(new DistrictEpisodeSaveData(), MemoryRuntime.Current);
+            city.TimeOfDay = 8;
+            city.Npcs[1].Position = FirstDistrictEpisode.Stop;
+            city.Npcs[2].Position = FirstDistrictEpisode.MarkStart;
+            city.Npcs[2].Trust = 10; city.Npcs[2].Friendliness = 20;
+            FirstDistrictStory.TryGetDialogue(city.Npcs[1],city.Progress,out _,out var choices);
+            city.Npcs[1].ApplyChoice(choices[stage==15?1:0],city.Progress);
+            city.Player!.Position = FirstDistrictEpisode.Signal;
+            if (stage == 15) city.InteractWithDistrict(DistrictInteraction.Signal);
+        }
+        if (stage == 12)
+        {
+            city.InteractWithDistrict(DistrictInteraction.Signal);
+            var mark = city.Npcs[2];
+            FirstDistrictStory.TryGetDialogue(mark,city.Progress,out string line,out var choices);
+            Set("_dialogueNpc",mark); Set("_dialogueNpcLine",line); Set("_dialogueChoices",choices);
+            city.Player!.Position = FirstDistrictEpisode.MarkStart + new Vector3(0,0,-2);
+        }
+        if (stage == 13)
+        {
+            Set("_dialogueNpc",null!);
+            FirstDistrictStory.TryGetDialogue(city.Npcs[2],city.Progress,out _,out var choices);
+            city.Npcs[2].ApplyChoice(choices[0],city.Progress);
+            city.Player!.Position = FirstDistrictEpisode.Stop + new Vector3(0,0,-2);
+            for (int i=0;i<180;i++) city.UpdateNpcs(0.1f);
+            if (city.Progress.DistrictEpisode.Phase != DistrictPhase.Met) throw new Exception("Graphics episode never reached physical meeting");
+            FirstDistrictStory.TryGetDialogue(city.Npcs[2],city.Progress,out _,out choices);
+            city.Npcs[2].ApplyChoice(choices[0],city.Progress);
+        }
+        if (stage == 14)
+        {
+            city.Player!.Position = FirstDistrictEpisode.Rest;
+            city.InteractWithDistrict(DistrictInteraction.Rest);
+            if (!MemoryRuntime.Current.HasPersisted(FirstDistrictStory.MeetingEventId)) throw new Exception("Graphics episode lost morning memory");
+        }
+        city.UpdateNpcs(0);
+        var camera = (Camera)Get("_cam");
+        Vector3 focus = stage == 12 ? city.Npcs[2].Position+Vector3.UnitY : new Vector3(5,1,13);
+        camera.Pos = camera.TargetPos = focus + new Vector3(9,5,11);
+        camera.Front = Vector3.Normalize(focus-camera.Pos);
+        camera.Up = Vector3.UnitY;
+        camera.Right = Vector3.Normalize(Vector3.Cross(camera.Front,Vector3.UnitY));
+        Set("_currentInteraction",new Probuzhdenie.Player.InteractionDetector(city).Detect(city.Player!.Position));
+        Console.WriteLine("District visual stage: " + shots[stage].Name + "; phase=" + city.Progress.DistrictEpisode.Phase);
     }
     protected override void OnUpdateFrame(FrameEventArgs args)
     {

@@ -36,6 +36,8 @@ public class CityRenderer : IDisposable
     private int _highlightVao, _highlightVbo;
     private int _roadGpuBytes, _sidewalkGpuBytes, _buildingGpuBytes, _windowGpuBytes, _highlightGpuBytes;
     private int _sceneryVao, _sceneryVbo, _sceneryCount, _sceneryGpuBytes;
+    private int _districtVao, _districtVbo, _districtCount, _districtGpuBytes;
+    private (DistrictPhase phase, int day) _districtMeshState = ((DistrictPhase)(-1), -1);
     private int _facadeVao, _facadeVbo, _facadeCount, _facadeGpuBytes;
     private int _glassVao, _glassVbo, _glassCount, _glassGpuBytes;
     private readonly List<SceneRange> _facadeRanges = new(), _buildingRanges = new(), _windowRanges = new(),
@@ -282,6 +284,8 @@ public class CityRenderer : IDisposable
 
     public Vector3 ClampToWalkable(Vector3 pos, float radius)
     {
+        if (DistrictScene.TramPresent(_progress.DistrictEpisode, _progress.Day))
+            pos = OutsideBounds(pos, DistrictScene.TramBounds, radius);
         foreach (var bounds in _buildingBounds)
         {
             float bx1 = bounds.Min.X - radius;
@@ -303,6 +307,19 @@ public class CityRenderer : IDisposable
             else pos.Z = bz2;
         }
         pos.Y = CityGenerator.GroundHeight(pos.X, pos.Z);
+        return pos;
+    }
+
+    private static Vector3 OutsideBounds(Vector3 pos, Box2 bounds, float radius)
+    {
+        float left = bounds.Min.X - radius, right = bounds.Max.X + radius;
+        float top = bounds.Min.Y - radius, bottom = bounds.Max.Y + radius;
+        if (pos.X <= left || pos.X >= right || pos.Z <= top || pos.Z >= bottom) return pos;
+        float min = Math.Min(Math.Min(pos.X-left,right-pos.X), Math.Min(pos.Z-top,bottom-pos.Z));
+        if (min == pos.X-left) pos.X = left;
+        else if (min == right-pos.X) pos.X = right;
+        else if (min == pos.Z-top) pos.Z = top;
+        else pos.Z = bottom;
         return pos;
     }
 
@@ -468,7 +485,7 @@ public class CityRenderer : IDisposable
         _npcGpuCapacityBytes +
         _highlightGpuBytes +
         _interiorGpuBytes +
-        _sceneryGpuBytes + _facadeGpuBytes + _glassGpuBytes;
+        _sceneryGpuBytes + _facadeGpuBytes + _glassGpuBytes + _districtGpuBytes;
 
     public long EstimatedGpuTextureBytes => _materials.TextureBytes + _shadows.TextureBytes;
 
@@ -477,7 +494,7 @@ public class CityRenderer : IDisposable
     public NpcCharacter? Player => _player;
     public bool HidePlayerForCamera { get; set; }
     public AwarenessSystem Awareness => _awareness;
-    public float TimeOfDay { get => _timeOfDay; set => _timeOfDay = value; }
+    public float TimeOfDay { get => _timeOfDay; set { _timeOfDay = value; _progress.DistrictEpisode.CurrentTime = value; } }
 
     public CityRenderer(int seed, HeroProgress? progress = null)
     {
@@ -496,7 +513,49 @@ public class CityRenderer : IDisposable
             _buildingBounds.Add(CityStreetProps.ParkedCarBounds(block));
         }
         BuildInterestMarkers();
+        _buildingBounds.AddRange(DistrictScene.PropBounds);
         SpawnNpcs(seed);
+        PlaceDistrictActors();
+    }
+
+    private void PlaceDistrictActors()
+    {
+        _npcs[1].Position = FirstDistrictEpisode.Stop;
+        _npcs[2].Position = _progress.Day == 1 ? _progress.DistrictEpisode.MarkPosition :
+            MemoryRuntime.Current.HasPersisted(FirstDistrictStory.MeetingEventId) ? FirstDistrictEpisode.MarkMeeting : FirstDistrictEpisode.MarkStart;
+    }
+
+    internal void UpdateDistrict(float dt)
+    {
+        _progress.DistrictEpisode.CurrentTime = _timeOfDay;
+        _progress.DistrictEpisode.Update(this, dt);
+    }
+
+    public bool InteractWithDistrict(DistrictInteraction interaction)
+    {
+        if (_player == null || _inside || _progress.DistrictEpisode.Detect(_player.Position, _progress.Day) != interaction) return false;
+        var episode = _progress.DistrictEpisode;
+        switch (interaction)
+        {
+            case DistrictInteraction.Signal:
+                bool changed = episode.ActivateSignal(_player.Position, _timeOfDay, _progress.Day);
+                if (changed) _progress.DiscoverEgg("district1.signal-action", memoryGain: 1, curiosityGain: 0, agencyGain: 2);
+                _feedbackMessage = episode.SignalText(_progress.Day);
+                break;
+            case DistrictInteraction.Trace:
+                _feedbackMessage = episode.TraceText(_progress.Day);
+                break;
+            case DistrictInteraction.Rest:
+                AdvanceDayClock((24f - _timeOfDay + 0.01f) / 0.03f);
+                TimeOfDay = 8f;
+                _player.Velocity = Vector3.Zero;
+                _feedbackMessage = episode.TraceText(_progress.Day);
+                break;
+            default: return false;
+        }
+        _feedbackTimer = 6f;
+        _feedbackColor = new(0.82f,0.88f,0.72f);
+        return true;
     }
 
     private void SpawnNpcs(int seed)
@@ -774,7 +833,9 @@ public class CityRenderer : IDisposable
                 if (npc == _player) continue;
                 npc.Reset();
             }
+            PlaceDistrictActors();
         }
+        _progress.DistrictEpisode.CurrentTime = _timeOfDay;
     }
 
     public void UpdateNpcs(float dt)
@@ -787,10 +848,19 @@ public class CityRenderer : IDisposable
         foreach (var npc in _npcs)
         {
             if (npc == _player) continue;
+            if (npc.Id is 1 or 2)
+            {
+                if (npc.State != NpcState.Aware) npc.State = NpcState.Relaxing;
+                npc.Velocity = Vector3.Zero;
+                npc.AnimBlend = 0;
+                continue;
+            }
             npc.Update(_timeOfDay, dt);
             if (npc.State != NpcState.Sleeping)
                 npc.Position = ClampToWalkable(npc.Position, 0.25f);
         }
+
+        UpdateDistrict(dt);
 
         // --- Easter egg detection (per-frame) ---
         if (_player != null)
@@ -923,6 +993,7 @@ public class CityRenderer : IDisposable
                 CharacterMesh.DetailForDistance(Vector3.DistanceSquared(npc.Position, CharacterViewPosition ?? _player.Position));
             _characterMesh.Append(npc, _animationTime, detail: detail);
         }
+
         _npcCount = _characterMesh.VertexCount;
         UploadDynamic(_characterMesh.Data, _characterMesh.FloatCount);
     }
@@ -958,6 +1029,12 @@ public class CityRenderer : IDisposable
 
     public void Render(CityRenderContext context, ref Matrix4 view, ref Matrix4 proj, Vector3 fogCol)
     {
+        var districtState = (_progress.DistrictEpisode.Phase, _progress.Day);
+        if (!_inside && _districtMeshState != districtState)
+        {
+            Upload(ref _districtVao, ref _districtVbo, ref _districtCount, ref _districtGpuBytes, DistrictScene.Build(_progress.DistrictEpisode, _progress.Day));
+            _districtMeshState = districtState;
+        }
         SceneLighting lighting = SceneLighting.At(_timeOfDay);
         float shadowStrength = _inside || !ShadowsEnabled ? 0 : 1-lighting.WindowGlow;
         Vector3 focus = _player?.Position ?? Vector3.Zero;
@@ -972,6 +1049,7 @@ public class CityRenderer : IDisposable
                     DrawShadow(_facadeVao,_facadeRanges,focus);
                     DrawShadow(_buildingVao,_buildingRanges,focus);
                     DrawShadow(_sceneryVao,_sceneryRanges,focus);
+                    if (_districtCount > 0) { GL.BindVertexArray(_districtVao); GL.DrawArrays(PrimitiveType.Triangles,0,_districtCount); }
                     if (_npcCount > 0) { GL.BindVertexArray(_npcVao); GL.DrawArrays(PrimitiveType.Triangles,0,_npcCount); }
                 }
                 finally { _shadows.End(); }
@@ -1019,6 +1097,7 @@ public class CityRenderer : IDisposable
                 }
                 GL.Uniform1(context.MaterialLocation,0);
                 DrawVisible(_sceneryVao,_sceneryRanges,view,proj);
+                if (_districtCount > 0) { GL.BindVertexArray(_districtVao); GL.DrawArrays(PrimitiveType.Triangles,0,_districtCount); }
             }
             GL.Uniform1(context.MaterialLocation,0);
             if (_npcCount > 0) { GL.BindVertexArray(_npcVao); GL.DrawArrays(PrimitiveType.Triangles,0,_npcCount); }
@@ -1143,6 +1222,7 @@ public class CityRenderer : IDisposable
         DeleteMesh(ref _buildingVao, ref _buildingVbo, ref _buildingCount, ref _buildingGpuBytes);
         DeleteMesh(ref _windowVao, ref _windowVbo, ref _windowCount, ref _windowGpuBytes);
         DeleteMesh(ref _sceneryVao, ref _sceneryVbo, ref _sceneryCount, ref _sceneryGpuBytes);
+        DeleteMesh(ref _districtVao, ref _districtVbo, ref _districtCount, ref _districtGpuBytes);
         DeleteMesh(ref _npcVao, ref _npcVbo, ref _npcCount);
         _npcGpuCapacityBytes = 0;
         DeleteMesh(ref _interiorVao, ref _interiorVbo, ref _interiorCount, ref _interiorGpuBytes);

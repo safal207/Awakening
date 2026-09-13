@@ -22,6 +22,7 @@ public class HeroProgress
     public const int DailyTalkGoal = 2;
 
     public int Day { get; private set; } = 1;
+    public FirstDistrictEpisode DistrictEpisode { get; } = new();
     public float Memory { get; private set; } = 0f; // 0-100
     public float Curiosity { get; private set; } = 0f; // 0-100
     public float Empathy { get; private set; } = 0f; // 0-100
@@ -63,6 +64,7 @@ public class HeroProgress
 
     public void NewDay()
     {
+        DistrictEpisode.EndDay();
         MemoryRuntime.RunSverka(Day);
         Day++;
 

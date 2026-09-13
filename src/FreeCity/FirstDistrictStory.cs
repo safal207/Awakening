@@ -13,6 +13,21 @@ public static class FirstDistrictStory
     private const string LidaRepairAction = "district1.lida.repair";
     private const string MarkOfferWitnessAction = "district1.mark.offer-witness";
     private const string MarkLeaveAction = "district1.mark.leave";
+    private const string MarkInviteAction = "district1.mark.invite";
+    private const string MarkDeclineAction = "district1.mark.decline-invitation";
+
+    public static bool CanApplyChoice(NpcCharacter npc, DialogueChoice choice, HeroProgress progress)
+    {
+        var episode = progress.DistrictEpisode;
+        return choice.ActionId switch
+        {
+            LidaDelayAction or LidaRepairAction => npc.Name == LidaName && progress.Day == 1 && episode.Phase == DistrictPhase.Routine && episode.CurrentTime < 22f,
+            MarkInviteAction or MarkDeclineAction => npc.Name == MarkName && progress.Day == 1 && episode.Phase == DistrictPhase.WaitingForMark && episode.CurrentTime < episode.Deadline,
+            MarkOfferWitnessAction or MarkLeaveAction => npc.Name == MarkName && progress.Day == 1 && episode.Phase == DistrictPhase.Met &&
+                FindMarkWitness(MemoryRuntime.Current.FindAnchor(MeetingEventId), npc.Id)?.UnderstoodEvent == false,
+            _ => true,
+        };
+    }
 
     public static void ApplyIdentity(NpcCharacter npc)
     {
@@ -43,20 +58,51 @@ public static class FirstDistrictStory
         switch (choice.ActionId)
         {
             case LidaDelayAction:
-                RegisterMeetingCandidate(npc, progress.Day);
+                progress.DistrictEpisode.Plan(true, progress.Day);
                 break;
             case LidaRepairAction:
+                progress.DistrictEpisode.Plan(false, progress.Day);
+                break;
+            case MarkInviteAction:
+                progress.DistrictEpisode.Invite(npc, progress.Day, progress.DistrictEpisode.CurrentTime);
+                break;
+            case MarkDeclineAction:
+                progress.DistrictEpisode.DeclineInvitation();
                 break;
             case MarkOfferWitnessAction:
                 RecordMarkDecision(npc);
                 break;
             case MarkLeaveAction:
+                var witness = FindMarkWitness(MemoryRuntime.Current.FindAnchor(MeetingEventId), npc.Id);
+                if (witness != null)
+                {
+                    witness.UnderstoodEvent = true;
+                    witness.Consented = false;
+                    witness.ConsentReason = "Участник не вовлечён в сохранение памяти по решению героя.";
+                }
                 break;
         }
     }
 
     private static bool TryGetLidaDialogue(HeroProgress progress, out string line, out DialogueChoice[] choices)
     {
+        var episode = progress.DistrictEpisode;
+        if (episode.Phase is DistrictPhase.Repaired or DistrictPhase.Missed)
+        {
+            line = episode.Phase == DistrictPhase.Repaired ? "Сигнал исправен, рейс ушёл вовремя. Сегодня мы с Марком не встретились." :
+                episode.InvitationWithdrawn ? "Ты решил не приглашать Марка. Тогда я отпускаю рейс." :
+                episode.MarkRefused ? "Марк не захотел прийти. Я уважаю его решение." : "Время вышло. Я отпустила рейс. Марк так и не пришёл.";
+            choices = new[] { new DialogueChoice("Понимаю.", 0, 0, 0, 0, 0, 0, 0, RewardId: "district1.lida.outcome") };
+            return true;
+        }
+        if (progress.Day == 1 && episode.Phase != DistrictPhase.Routine && episode.Phase != DistrictPhase.Met)
+        {
+            line = episode.Phase is DistrictPhase.RepairPlanned or DistrictPhase.DelayPlanned
+                ? "Пульт у перехода. Пока ты не переключишь сигнал, ничего не изменится."
+                : "Я держу рейс, но не бесконечно. Марк дальше по этому тротуару. Приведи его сюда.";
+            choices = new[] { new DialogueChoice("Я вернусь.", 0, 0, 0, 0, 0, 0, 0, RewardId: "district1.lida.plan") };
+            return true;
+        }
         MemoryAnchor? anchor = MemoryRuntime.Current.FindAnchor(MeetingEventId);
         bool persisted = MemoryRuntime.Current.HasPersisted(MeetingEventId);
 
@@ -84,7 +130,7 @@ public static class FirstDistrictStory
 
         if (progress.Day == 1 && anchor != null)
         {
-            line = "Я задержу рейс на минуту. Если Марк придёт — дальше он решает сам.";
+            line = "Марк пришёл. Мы впервые поговорили не по расписанию. Захочет ли он это запомнить?";
             choices = new[]
             {
                 new DialogueChoice("Спасибо. Я поговорю с ним.", 2, 2, 0, 1, 2, 1, 0, RewardId: "district1.lida.delay.thanks"),
@@ -111,6 +157,30 @@ public static class FirstDistrictStory
 
     private static bool TryGetMarkDialogue(NpcCharacter mark, HeroProgress progress, out string line, out DialogueChoice[] choices)
     {
+        var episode = progress.DistrictEpisode;
+        if (progress.Day == 1 && episode.Phase == DistrictPhase.WaitingForMark)
+        {
+            line = "Лида удерживает рейс? Я могу дойти до остановки. Но мне нужно самому решить, хочу ли я идти.";
+            choices = new[]
+            {
+                new DialogueChoice("Она ждёт у перехода. Приходи, если хочешь.", 0, 0, 0, 0, 0, 0, 0, MarkInviteAction),
+                new DialogueChoice("Не буду отвлекать тебя. Оставим всё как есть.", 0, 0, 0, 0, 0, 0, 0, MarkDeclineAction),
+            };
+            return true;
+        }
+        if (progress.Day == 1 && episode.Phase == DistrictPhase.MarkOnWay)
+        {
+            line = "Я иду к остановке. Поговорим там, вместе с Лидой.";
+            choices = new[] { new DialogueChoice("До встречи там.", 0, 0, 0, 0, 0, 0, 0, RewardId: "district1.mark.on-way") };
+            return true;
+        }
+        if (episode.Phase is DistrictPhase.Repaired or DistrictPhase.Missed)
+        {
+            line = episode.InvitationWithdrawn ? "Ты решил оставить всё как есть. Я не успел ответить на приглашение." :
+                episode.MarkRefused ? "Я решил остаться. Не хочу, чтобы за меня решали." : "Рейс ушёл. Мы с Лидой сегодня не встретились.";
+            choices = new[] { new DialogueChoice("Я услышал тебя.", 0, 0, 0, 0, 0, 0, 0, RewardId: "district1.mark.no-meeting") };
+            return true;
+        }
         MemoryAnchor? anchor = MemoryRuntime.Current.FindAnchor(MeetingEventId);
         MemoryWitness? witness = FindMarkWitness(anchor, mark.Id);
         bool persisted = MemoryRuntime.Current.HasPersisted(MeetingEventId);
@@ -173,7 +243,7 @@ public static class FirstDistrictStory
         return true;
     }
 
-    private static void RegisterMeetingCandidate(NpcCharacter lida, int day)
+    internal static void RegisterMeetingCandidate(NpcCharacter lida, int day)
     {
         var ledger = MemoryRuntime.Current;
         int heroId = MemoryRuntime.HeroId;

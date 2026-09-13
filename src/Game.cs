@@ -297,6 +297,13 @@ public class Game : GameWindow
                 case InteractionType.Talk:
                     StartDialogue(_currentInteraction.TargetNpc!);
                     break;
+                case InteractionType.District:
+                    if (_city.InteractWithDistrict(_currentInteraction.DistrictAction))
+                    {
+                        _playerController?.ResetMotion();
+                        if (_profileOptions == null) _city.SaveGame();
+                    }
+                    break;
             }
         }
 
@@ -868,7 +875,7 @@ public class Game : GameWindow
         Vector3 panel = new(0.035f, 0.043f, 0.048f);
         Vector3 accent = new(0.16f, 0.48f, 0.78f);
         Vector3 warm = new(1f, 0.8f, 0.2f);
-        float uiScale = 0.00435f;
+        float uiScale = Math.Min(0.00435f, 0.218f / _ui.MeasureText("ПАМ 100  ЛЮБ 100", 1f));
         float x = 0.026f;
         float y = 0.03f;
         float line = 0.033f;
@@ -903,9 +910,9 @@ public class Game : GameWindow
             _ui.Text($"ВНУТРИ: {_city.InteriorName()}", x, y, uiScale * 0.9f, warm);
 
         string msg = _city.Awareness.CurrentMessage;
-        if (!string.IsNullOrEmpty(msg))
+        if (!string.IsNullOrEmpty(msg) && _dialogueNpc == null)
         {
-            float msgSize = 0.0042f;
+            float msgSize = Math.Min(0.0042f, 0.525f / Math.Max(1f, _ui.MeasureText(msg,1f)));
             float msgWidth = Math.Min(0.56f, _ui.MeasureText(msg, msgSize) + 0.035f);
             _ui.Rect(0.014f, 0.825f, msgWidth, 0.056f, panel);
             _ui.Rect(0.014f, 0.825f, 0.006f, 0.056f, warm);
@@ -933,16 +940,16 @@ public class Game : GameWindow
 
     private void RenderFeedback()
     {
-        if (_city == null || _city.FeedbackTimer <= 0f) return;
+        if (_city == null || _city.FeedbackTimer <= 0f || _dialogueNpc != null) return;
 
         float pulse = 0.65f + 0.35f * MathF.Sin(_city.FeedbackTimer * 8f);
         Vector3 color = _city.FeedbackColor * pulse;
-        _ui.Rect(0.31f, 0.905f, 0.38f, 0.052f, new Vector3(0.035f, 0.043f, 0.048f));
-        _ui.Rect(0.31f, 0.905f, 0.38f * Math.Clamp(_city.FeedbackTimer / 4f, 0f, 1f), 0.008f, color);
-
-        float size = 0.0048f;
+        float size = 0.0033f;
         string message = _city.FeedbackMessage.ToUpperInvariant();
-        _ui.Text(message, 0.50f - _ui.MeasureText(message, size) / 2f, 0.923f, size, color);
+        var lines = _ui.WrapText(message, size, 0.86f);
+        float top = 0.985f - lines.Count * 0.029f - 0.02f;
+        _ui.Rect(0.06f, top, 0.88f, 0.985f-top, new Vector3(0.035f, 0.043f, 0.048f));
+        for (int i = 0; i < lines.Count; i++) _ui.Text(lines[i],0.07f,top+0.01f+i*0.029f,size,color);
     }
 
     private void RenderDialogue()
@@ -957,12 +964,20 @@ public class Game : GameWindow
         Vector3 selectedCol = new(0.16f, 0.48f, 0.78f);
 
         float px = 0.08f;
-        float py = 0.62f;
+        float py;
         float pw = 0.84f;
-        float ph = 0.33f;
+        float ph;
         float pad = 0.025f;
         float lineH = 0.036f;
         float textSize = 0.0045f;
+        var speech = _ui.WrapText(_dialogueNpcLine, textSize, pw-pad*2);
+        while (speech.Count > 3)
+        {
+            textSize *= 0.95f;
+            speech = _ui.WrapText(_dialogueNpcLine, textSize, pw-pad*2);
+        }
+        ph = pad*2 + lineH*(1.9f+speech.Count) + _dialogueChoices.Length*(lineH*1.2f+0.005f);
+        py = 0.95f-ph;
 
         _ui.Rect(px, py, pw, ph, bg);
         _ui.Rect(px + 0.003f, py + 0.003f, pw - 0.006f, 0.004f, border);
@@ -971,8 +986,11 @@ public class Game : GameWindow
         _ui.Text(_dialogueNpc.Name.ToUpperInvariant(), px + pad, cy, textSize * 1.15f, nameCol);
         cy += lineH * 1.3f;
 
-        _ui.Text(_dialogueNpcLine, px + pad, cy, textSize, textCol);
-        cy += lineH * 1.8f;
+        foreach (string speechLine in speech)
+        {
+            _ui.Text(speechLine, px+pad, cy, textSize, textCol);
+            cy += lineH;
+        }
 
         _ui.Rect(px + pad, cy, pw - pad * 2, 0.002f, new Vector3(0.1f, 0.12f, 0.13f));
         cy += lineH * 0.6f;
@@ -988,7 +1006,8 @@ public class Game : GameWindow
             if (sel) _ui.Rect(cx, cy, 0.006f, ch, selectedCol);
 
             string label = $"{i + 1}. {_dialogueChoices[i].Text}";
-            _ui.Text(label, cx + 0.012f, cy + 0.006f, textSize * 0.9f, sel ? selectedCol : choiceCol);
+            float choiceSize = Math.Min(textSize*0.9f, (cw-0.024f) / Math.Max(1f,_ui.MeasureText(label,1f)));
+            _ui.Text(label, cx + 0.012f, cy + 0.006f, choiceSize, sel ? selectedCol : choiceCol);
             cy += ch + 0.005f;
         }
     }
@@ -1052,6 +1071,14 @@ public class Game : GameWindow
             Vector2 p = WorldToMiniMapRotated(npc.Position, pp.X, pp.Z, cosR, sinR, mx, my, size, worldRadius);
             _ui.Rect(p.X - 0.0015f, p.Y - 0.0015f, 0.003f, 0.003f, new Vector3(0.5f, 0.5f, 0.5f));
         }
+
+        // Player direction triangle
+        var objective = _city.Progress.DistrictEpisode.Objective(_city.Progress.Day);
+        Vector2 target = WorldToMiniMapRotated(objective.position, pp.X, pp.Z, cosR, sinR, mx, my, size, worldRadius);
+        _ui.Rect(target.X-0.004f, target.Y-0.004f, 0.008f, 0.008f, new Vector3(0.96f,0.72f,0.25f));
+        string objectiveText = objective.name + " " + ((int)Vector3.Distance(pp, objective.position)) + " м";
+        float objectiveSize = Math.Min(0.0026f, (size-0.01f) / Math.Max(1f, _ui.MeasureText(objectiveText, 1f)));
+        _ui.Text(objectiveText, mx, my+size+0.012f, objectiveSize, new Vector3(0.96f,0.8f,0.45f));
 
         // Player direction triangle
         float triSize = 0.008f;

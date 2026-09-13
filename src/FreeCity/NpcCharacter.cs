@@ -318,6 +318,7 @@ public class NpcCharacter
 
     public bool ApplyChoice(DialogueChoice choice, HeroProgress progress)
     {
+        if (!FirstDistrictStory.CanApplyChoice(this, choice, progress)) return false;
         if (!progress.TryClaimDialogueReward(Id, choice)) return false;
         Friendliness = Math.Clamp(Friendliness + choice.FriendlinessDelta, 0f, 100f);
         Trust = Math.Clamp(Trust + choice.TrustDelta, 0f, 100f);

@@ -36,6 +36,8 @@ public static class MemoryIntegrationTests
             var lida = story.Npcs[1];
             FirstDistrictStory.TryGetDialogue(lida, progress, out _, out var choices);
             Check(lida.ApplyChoice(choices[0], progress), "first story action applies");
+            Check(MemoryRuntime.Current.Anchors.Count == 0, "dialogue alone never creates a meeting");
+            FirstDistrictStoryTests.ArrangeMeeting(story);
             FirstDistrictStory.TryGetDialogue(lida, progress, out _, out choices);
             var reply = choices[0];
             Check(lida.ApplyChoice(reply, progress), "first response applies");

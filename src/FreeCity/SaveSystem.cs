@@ -9,7 +9,7 @@ namespace Probuzhdenie.FreeCity;
 
 public static class SaveSystem
 {
-    private const int CurrentSaveVersion = 2;
+    private const int CurrentSaveVersion = 3;
     private static readonly string SaveDirectory = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Probuzhdenie");
     private static readonly string SaveFilePath = Path.Combine(SaveDirectory, "save.json");
@@ -49,6 +49,7 @@ public static class SaveSystem
         public List<MemoryEvent> MemoryEvents { get; set; } = new();
         public List<MemoryAnchorSaveData> MemoryAnchors { get; set; } = new();
         public List<string> RewardedDialogueChoices { get; set; } = new();
+        public DistrictEpisodeSaveData? DistrictEpisode { get; set; }
     }
 
     public static void Save(int seed, HeroProgress progress, AwarenessSystem awareness, float timeOfDay,
@@ -143,6 +144,44 @@ public static class SaveSystem
         void Require(bool ok, string detail) { if (!ok) throw new InvalidOperationException(detail); }
         try
         {
+            foreach (DistrictPhase phase in new[] { DistrictPhase.Routine, DistrictPhase.DelayPlanned, DistrictPhase.WaitingForMark, DistrictPhase.MarkOnWay, DistrictPhase.Repaired })
+            {
+                MemoryRuntime.Reset();
+                var city = new CityRenderer(424242);
+                var episode = city.Progress.DistrictEpisode;
+                if (phase != DistrictPhase.Routine) episode.Plan(phase != DistrictPhase.Repaired, 1);
+                if (phase is DistrictPhase.WaitingForMark or DistrictPhase.MarkOnWay or DistrictPhase.Repaired)
+                    episode.ActivateSignal(FirstDistrictEpisode.Signal, 8f, 1);
+                if (phase == DistrictPhase.MarkOnWay)
+                {
+                    city.Npcs[2].Trust = 10; city.Npcs[2].Friendliness = 20;
+                    episode.Invite(city.Npcs[2], 1, 8f);
+                    for (int step = 0; step < 20; step++) { city.AdvanceDayClock(0.1f); city.UpdateDistrict(0.1f); }
+                }
+                var markPosition = city.Npcs[2].Position;
+                SaveToPath(path, city.Seed, city.Progress, city.Awareness, city.TimeOfDay, DateTime.UtcNow, city.Npcs, MemoryRuntime.Current);
+                var loaded = LoadFromPath(path);
+                MemoryRuntime.Replace(loaded.memoryLedger);
+                var restored = new CityRenderer(loaded.seed, loaded.progress) { TimeOfDay = loaded.timeOfDay };
+                restored.RestoreNpcs(loaded.npcs);
+                Require(restored.Progress.DistrictEpisode.Phase == phase && restored.Progress.DistrictEpisode.Deadline == episode.Deadline,
+                    "unfinished episode and deadline survive load: " + phase);
+                Require(OpenTK.Mathematics.Vector3.Distance(restored.Npcs[2].Position, markPosition) < 0.02f, "Mark route progress survives load");
+                if (phase == DistrictPhase.MarkOnWay)
+                {
+                    restored.Player!.Position = FirstDistrictEpisode.Stop + new OpenTK.Mathematics.Vector3(0,0,-2);
+                    for (int step = 0; step < 180; step++) { restored.AdvanceDayClock(0.1f); restored.UpdateDistrict(0.1f); }
+                    Require(restored.Progress.DistrictEpisode.Phase == DistrictPhase.Met && loaded.memoryLedger.Events.Count == 1,
+                        "loaded route reaches one physical meeting");
+                }
+                else if (phase == DistrictPhase.WaitingForMark)
+                {
+                    restored.TimeOfDay = episode.Deadline;
+                    restored.UpdateDistrict(0);
+                    Require(restored.Progress.DistrictEpisode.Phase == DistrictPhase.Missed, "load does not reset delay deadline");
+                }
+            }
+
             foreach (bool consent in new[] { true, false })
             {
                 MemoryRuntime.Reset();
@@ -150,10 +189,11 @@ public static class SaveSystem
                 var city = new CityRenderer(424242, progress);
                 var lida = city.Npcs[1];
                 var mark = city.Npcs[2];
-                if (!consent) mark.Trust = 0f;
                 FirstDistrictStory.TryGetDialogue(lida, progress, out _, out var choices);
                 var lidaChoice = choices[0];
-                Require(lida.ApplyChoice(lidaChoice, progress), "Lida creates candidate");
+                Require(lida.ApplyChoice(lidaChoice, progress), "Lida plans delay");
+                FirstDistrictStoryTests.ArrangeMeeting(city);
+                if (!consent) mark.Trust = 0f;
 
                 SaveToPath(path, 424242, progress, city.Awareness, 13f, DateTime.UtcNow, city.Npcs, MemoryRuntime.Current);
                 var loaded = LoadFromPath(path);
@@ -204,6 +244,15 @@ public static class SaveSystem
                 Require(loaded.seed == 424242 && loaded.memoryLedger.Events.Count == 0 &&
                     loaded.progress.RewardedDialogueChoices.Count == 0, "legacy save defaults");
             }
+            File.WriteAllText(path, JsonSerializer.Serialize(new { Version = 2, Seed = 424242, Day = 1,
+                RewardedDialogueChoices = new[] { "npc:1:action:district1.lida.delay" } }), SaveEncoding);
+            var migrated = LoadFromPath(path);
+            Require(migrated.progress.DistrictEpisode.Phase == DistrictPhase.DelayPlanned &&
+                migrated.progress.DistrictEpisode.ActivateSignal(FirstDistrictEpisode.Signal,8,1), "legacy rewarded plan remains playable");
+            File.WriteAllText(path, JsonSerializer.Serialize(new { Version = 2, Seed = 424242, Day = 2 }), SaveEncoding);
+            migrated = LoadFromPath(path);
+            Require(migrated.progress.DistrictEpisode.Phase == DistrictPhase.Missed, "legacy later morning has no pending first-day objective");
+
             File.WriteAllText(path, JsonSerializer.Serialize(new { Version = CurrentSaveVersion + 1 }), SaveEncoding);
             bool refusedFutureVersion = false;
             try { LoadFromPath(path); }
@@ -264,6 +313,7 @@ public static class SaveSystem
                 MemoryEvents = memoryLedger?.Events.ToList() ?? new List<MemoryEvent>(),
                 MemoryAnchors = memoryLedger?.Anchors.Select(MemoryAnchorSaveData.From).ToList() ?? new List<MemoryAnchorSaveData>(),
                 RewardedDialogueChoices = progress.RewardedDialogueChoices.ToList(),
+                DistrictEpisode = progress.DistrictEpisode.Snapshot(),
             };
 
             string json = JsonSerializer.Serialize(data, SaveOptions);
@@ -299,6 +349,14 @@ public static class SaveSystem
             var ledger = new MemoryLedger();
             var anchors = (data.MemoryAnchors ?? new List<MemoryAnchorSaveData>()).Select(a => a.ToAnchor()).ToList();
             ledger.Restore(data.MemoryEvents, anchors);
+            progress.DistrictEpisode.Restore(data.DistrictEpisode, ledger);
+            if (data.DistrictEpisode == null && progress.DistrictEpisode.Phase == DistrictPhase.Routine)
+            {
+                bool delay = progress.RewardedDialogueChoices.Contains("npc:1:action:district1.lida.delay");
+                bool repair = progress.RewardedDialogueChoices.Contains("npc:1:action:district1.lida.repair");
+                if (delay || repair) progress.DistrictEpisode.Plan(delay, progress.Day);
+            }
+            if (progress.Day > 1) progress.DistrictEpisode.EndDay();
 
             double minutesAway = Math.Max(0d, (DateTime.UtcNow - data.LastSavedUtc.ToUniversalTime()).TotalMinutes);
             double offlineMinutes = data.Awareness >= HeroProgress.OfflineGrowthAwarenessThreshold
