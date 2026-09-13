@@ -53,7 +53,7 @@ public sealed class MemoryAnchor
     {
         foreach (var pair in _witnesses)
         {
-            if (pair.Key != actorId && pair.Value == WitnessConsent.Accepted)
+            if (pair.Key >= 0 && pair.Key != actorId && pair.Value == WitnessConsent.Accepted)
                 return true;
         }
         return false;
@@ -61,10 +61,9 @@ public sealed class MemoryAnchor
 }
 
 /// <summary>
-/// Minimal event/anchor store for M1. It provides stable IDs and idempotency so
-/// the same event cannot be rewarded or anchored twice by repeated input/load.
-/// It is not yet wired into save/load or Sverka; that comes after the data
-/// contract and invariants are proven.
+/// Minimal event/anchor store for M1. Stable IDs make event creation idempotent.
+/// ApplySverka removes events that never acquired a valid shared-memory anchor.
+/// Disk persistence remains a separate M1 task.
 /// </summary>
 public sealed class MemoryLedger
 {
@@ -82,9 +81,9 @@ public sealed class MemoryLedger
 
     public bool TryCreateAnchor(string eventId, string traceId, int witnessNpcId, WitnessConsent consent)
     {
-        if (!_events.TryGetValue(eventId, out var memoryEvent)) return false;
+        if (string.IsNullOrWhiteSpace(eventId) || !_events.TryGetValue(eventId, out var memoryEvent)) return false;
         if (string.IsNullOrWhiteSpace(traceId)) return false;
-        if (witnessNpcId == memoryEvent.ActorId) return false;
+        if (witnessNpcId < 0 || witnessNpcId == memoryEvent.ActorId) return false;
         if (consent != WitnessConsent.Accepted) return false;
         if (_anchors.ContainsKey(eventId)) return false;
 
@@ -98,13 +97,15 @@ public sealed class MemoryLedger
 
     public bool IsPersisted(string eventId)
     {
-        if (!_events.TryGetValue(eventId, out var memoryEvent)) return false;
+        if (string.IsNullOrWhiteSpace(eventId) || !_events.TryGetValue(eventId, out var memoryEvent)) return false;
         return _anchors.TryGetValue(eventId, out var anchor) &&
                anchor.HasAcceptedWitness(memoryEvent.ActorId);
     }
 
     public bool TryGetEvent(string eventId, out MemoryEvent? memoryEvent)
     {
+        memoryEvent = null;
+        if (string.IsNullOrWhiteSpace(eventId)) return false;
         bool found = _events.TryGetValue(eventId, out var value);
         memoryEvent = value;
         return found;
@@ -112,9 +113,26 @@ public sealed class MemoryLedger
 
     public bool TryGetAnchor(string eventId, out MemoryAnchor? anchor)
     {
+        anchor = null;
+        if (string.IsNullOrWhiteSpace(eventId)) return false;
         bool found = _anchors.TryGetValue(eventId, out var value);
         anchor = value;
         return found;
+    }
+
+    public int ApplySverka()
+    {
+        var forgotten = new List<string>();
+        foreach (string id in _events.Keys)
+            if (!IsPersisted(id)) forgotten.Add(id);
+
+        foreach (string id in forgotten)
+        {
+            _events.Remove(id);
+            _anchors.Remove(id);
+        }
+
+        return forgotten.Count;
     }
 
     private static bool IsValidEvent(MemoryEvent memoryEvent)
