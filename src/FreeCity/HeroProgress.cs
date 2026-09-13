@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace Probuzhdenie.FreeCity;
 
@@ -20,6 +22,7 @@ public class HeroProgress
     public const int DailyTalkGoal = 2;
 
     public int Day { get; private set; } = 1;
+    public FirstDistrictEpisode DistrictEpisode { get; } = new();
     public float Memory { get; private set; } = 0f; // 0-100
     public float Curiosity { get; private set; } = 0f; // 0-100
     public float Empathy { get; private set; } = 0f; // 0-100
@@ -40,17 +43,33 @@ public class HeroProgress
     private readonly HashSet<string> _discoveredEggs = new();
     public IReadOnlyCollection<string> DiscoveredEggs => _discoveredEggs;
 
+    private readonly HashSet<string> _rewardedDialogueChoices = new(StringComparer.Ordinal);
+    public IReadOnlyCollection<string> RewardedDialogueChoices => _rewardedDialogueChoices;
+
+    public bool TryClaimDialogueReward(int npcId, DialogueChoice choice)
+    {
+        string id = !string.IsNullOrWhiteSpace(choice.RewardId) ? "reward:" + choice.RewardId :
+            !string.IsNullOrWhiteSpace(choice.ActionId) ? "action:" + choice.ActionId :
+            "legacy:" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(choice.Text ?? "")));
+        return _rewardedDialogueChoices.Add($"npc:{npcId}:{id}");
+    }
+
+    public void LoadDialogueRewards(IEnumerable<string>? ids)
+    {
+        _rewardedDialogueChoices.Clear();
+        if (ids == null) return;
+        foreach (string id in ids)
+            if (!string.IsNullOrWhiteSpace(id)) _rewardedDialogueChoices.Add(id);
+    }
+
     public void NewDay()
     {
+        DistrictEpisode.EndDay();
+        MemoryRuntime.RunSverka(Day);
         Day++;
-        // Slight decay of qualities overnight to encourage active play
-        Memory = Math.Max(0f, Memory - 0.5f);
-        Curiosity = Math.Max(0f, Curiosity - 0.5f);
-        Empathy = Math.Max(0f, Empathy - 0.5f);
-        Agency = Math.Max(0f, Agency - 0.5f);
-        Courage = Math.Max(0f, Courage - 0.5f);
 
-        // Reset daily objective
+        // Earned qualities persist across mornings. Sverka resets the routine,
+        // not the hero's demonstrated growth.
         DailyTalkProgress = 0;
         DailyObjectiveDay = Day;
         DailyObjectiveCompleted = false;

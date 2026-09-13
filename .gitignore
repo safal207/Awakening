@@ -43,6 +43,9 @@ Thumbs.db
 desktop.ini
 
 # Runtime artifacts & profiling output
+*.log
+*.tmp
+runtime-profile.json
 runtime-profile-*.json
 runtime-profile-*.out
 runtime-profile-*.err

@@ -1,4 +1,5 @@
 using System;
+using System.Buffers;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using OpenTK.Graphics.OpenGL4;
@@ -12,7 +13,15 @@ public readonly record struct CityRenderContext(
     int ViewLocation,
     int ProjectionLocation,
     int ColorLocation,
-    int FogColorLocation);
+    int FogColorLocation,
+    int FogDensityLocation = -1,
+    int AmbientLocation = -1,
+    int MaterialLocation = -1,
+    int WorldPassLocation = -1,
+    int LightMatrixLocation = -1,
+    int ShadowStrengthLocation = -1,
+    int EyeLocation = -1,
+    int DaylightLocation = -1);
 
 public class CityRenderer : IDisposable
 {
@@ -26,17 +35,27 @@ public class CityRenderer : IDisposable
     private int _npcVao, _npcVbo, _npcCount;
     private int _highlightVao, _highlightVbo;
     private int _roadGpuBytes, _sidewalkGpuBytes, _buildingGpuBytes, _windowGpuBytes, _highlightGpuBytes;
-    private SpriteRenderer? _spriteRenderer;
-    private Texture? _treeTexture;
-    private readonly List<(Vector3 pos, float scale)> _treePositions = new();
-    private float[] _npcBuf = new float[131072];
-    private int _npcBufLen;
+    private int _sceneryVao, _sceneryVbo, _sceneryCount, _sceneryGpuBytes;
+    private int _districtVao, _districtVbo, _districtCount, _districtGpuBytes;
+    private int _tramVao, _tramVbo, _tramCount, _tramGpuBytes;
+    private (DistrictPhase phase, int day, ArchiveOutcome archive) _districtMeshState = ((DistrictPhase)(-1), -1, ArchiveOutcome.None);
+    private int _facadeVao, _facadeVbo, _facadeCount, _facadeGpuBytes;
+    private int _glassVao, _glassVbo, _glassCount, _glassGpuBytes;
+    private readonly List<SceneRange> _facadeRanges = new(), _buildingRanges = new(), _windowRanges = new(),
+        _glassRanges = new(), _sceneryRanges = new();
+    private readonly SceneMaterials _materials = new();
+    private readonly SunShadowMap _shadows = new();
+    private readonly CharacterMesh _characterMesh = new();
+    public Vector3? CharacterViewPosition { get; set; }
+    public bool ShadowsEnabled { get; set; } = true;
     private int _npcGpuCapacityBytes;
 
     private readonly List<NpcCharacter> _npcs = new();
     private readonly List<CityBlock> _blocks;
     private readonly List<InterestMarker> _markers = new();
     private readonly List<Box2> _buildingBounds = new();
+    internal StreetNavigation Navigation { get; }
+    private readonly Vector3[] _npcStepStarts = new Vector3[50];
     private readonly HashSet<string> _visitedMarkers = new();
     private readonly AwarenessSystem _awareness = new();
     private readonly int _seed;
@@ -71,7 +90,38 @@ public class CityRenderer : IDisposable
         }
     }
 
-    public void SaveGame() => SaveSystem.Save(_seed, _progress, _awareness, _timeOfDay, _npcs);
+    public bool SaveGame() => SaveSystem.Save(_seed, _progress, _awareness, _timeOfDay, _npcs,
+        player: _player == null ? null : PlayerSaveData.Capture(_player, _insideBlock));
+
+    public void RestorePlayer(PlayerSaveData? saved)
+    {
+        if (saved == null || _player == null) return;
+        saved.Validate(_seed);
+        DeleteMesh(ref _interiorVao,ref _interiorVbo,ref _interiorCount,ref _interiorGpuBytes);
+        _insideBlock = saved.FindInterior(_blocks);
+        _inside = _insideBlock.HasValue;
+        Vector3 position = saved.Position;
+        if (_inside) position.Y = 0f;
+        else
+        {
+            const float min = -CityGenerator.CityRadius * CityGenerator.CellSize - CityGenerator.RoadWidth + 1;
+            const float max = (CityGenerator.CityRadius + 1) * CityGenerator.CellSize - 1;
+            position.X = Math.Clamp(position.X,min,max);
+            position.Z = Math.Clamp(position.Z,min,max);
+            for (int i = 0; i < 4; i++)
+            {
+                position = ClampToWalkable(position,0.3f);
+                foreach (var npc in _npcs)
+                    if (npc != _player && Vector2.DistanceSquared(position.Xz,npc.Position.Xz) < 0.0001f)
+                        position.X += 0.7f;
+                position = AdjustForNpcCollision(position,0.3f,_player);
+            }
+        }
+        _player.Position = ClampPlayerToWalkable(position,0.3f);
+        _player.Rotation = _player.TargetRotation = saved.Yaw;
+        _player.Velocity = Vector3.Zero;
+        _player.AnimBlend = 0f;
+    }
 
     public void RestoreNpcs(List<SaveSystem.NpcSaveData>? npcData)
     {
@@ -118,7 +168,7 @@ public class CityRenderer : IDisposable
         _insideBlock = null;
         _inside = false;
         DeleteMesh(ref _interiorVao, ref _interiorVbo, ref _interiorCount, ref _interiorGpuBytes);
-        return new Vector3(doorX, 0, doorZ + 2f);
+        return new Vector3(doorX, CityGenerator.GroundHeight(doorX, doorZ + 2f), doorZ + 2f);
     }
 
     public bool IsNearDoor(Vector3 pos, float maxDist)
@@ -166,31 +216,18 @@ public class CityRenderer : IDisposable
         Vector3 ceilCol = new(0.85f, 0.82f, 0.8f);
 
         // Floor
-        Quad(ref v, ix, 0, iz, ix + iw, 0, iz, ix + iw, 0, iz + id, ix, 0, iz + id, floorCol.X, floorCol.Y, floorCol.Z);
+        SceneGeometry.Ground(v,ix,iz,iw,id,0,floorCol);
         // Ceiling
         Quad(ref v, ix, h, iz, ix + iw, h, iz, ix + iw, h, iz + id, ix, h, iz + id, ceilCol.X, ceilCol.Y, ceilCol.Z);
 
-        // Walls (inward-facing, thick enough to block outside view)
-        // Front (positive Z) — door side, darker
-        Quad(ref v, ix, 0, iz + id, ix + iw, 0, iz + id, ix + iw, h, iz + id, ix, h, iz + id, wallCol.X * 0.65f, wallCol.Y * 0.65f, wallCol.Z * 0.65f);
-        // Back (negative Z) — solid wall, darkest
-        Quad(ref v, ix + iw, 0, iz, ix, 0, iz, ix, h, iz, ix + iw, h, iz, wallCol.X * 0.45f, wallCol.Y * 0.45f, wallCol.Z * 0.45f);
-        // Right (positive X)
-        Quad(ref v, ix + iw, 0, iz, ix + iw, 0, iz + id, ix + iw, h, iz + id, ix + iw, h, iz, wallCol.X * 0.55f, wallCol.Y * 0.55f, wallCol.Z * 0.55f);
-        // Left (negative X)
-        Quad(ref v, ix, 0, iz, ix, 0, iz + id, ix, h, iz + id, ix, h, iz, wallCol.X * 0.75f, wallCol.Y * 0.75f, wallCol.Z * 0.75f);
-
-        // Back wall accent — darker strip to emphasize solidity
-        float stripH = 0.15f;
-        Quad(ref v, ix + iw, 0, iz, ix, 0, iz, ix, stripH, iz, ix + iw, stripH, iz,
-             wallCol.X * 0.3f, wallCol.Y * 0.3f, wallCol.Z * 0.3f);
-
-        // Door marker (lighter rectangle on front wall)
-        float doorW = 1.2f, doorH = 2.2f;
-        float doorCx = x + w * 0.5f;
-        Quad(ref v, doorCx - doorW * 0.5f, 0, iz + id + 0.01f, doorCx + doorW * 0.5f, 0, iz + id + 0.01f,
-                     doorCx + doorW * 0.5f, doorH, iz + id + 0.01f, doorCx - doorW * 0.5f, doorH, iz + id + 0.01f,
-                     0.4f, 0.6f, 0.8f);
+        // Room surfaces face inward; the door marker sits on the visible side.
+        FaceRect(v,new(ix+iw,0,iz+id),-Vector3.UnitX,iw,h,wallCol);
+        FaceRect(v,new(ix,0,iz),Vector3.UnitX,iw,h,wallCol*0.94f);
+        FaceRect(v,new(ix+iw,0,iz),Vector3.UnitZ,id,h,wallCol*0.97f);
+        FaceRect(v,new(ix,0,iz+id),-Vector3.UnitZ,id,h,wallCol);
+        FaceRect(v,new(ix,0,iz+0.015f),Vector3.UnitX,iw,0.15f,wallCol*0.5f);
+        float doorCx = x+w*0.5f;
+        FaceRect(v,new(doorCx+0.6f,0,iz+id-0.02f),-Vector3.UnitX,1.2f,2.2f,new(0.31f,0.44f,0.48f));
 
         // Furniture by type
         Vector3 wood = new(0.55f, 0.35f, 0.18f);
@@ -269,8 +306,20 @@ public class CityRenderer : IDisposable
         Upload(ref _interiorVao, ref _interiorVbo, ref _interiorCount, ref _interiorGpuBytes, v);
     }
 
+    public Vector3 ClampPlayerToWalkable(Vector3 pos, float radius)
+    {
+        if (!_inside || _insideBlock is not CityBlock block)
+            return ClampToWalkable(pos, radius);
+        float inset = 0.3f + radius;
+        pos.X = Math.Clamp(pos.X, block.X + inset, block.X + block.Width - inset);
+        pos.Z = Math.Clamp(pos.Z, block.Z + inset, block.Z + block.Depth - inset);
+        return pos;
+    }
+
     public Vector3 ClampToWalkable(Vector3 pos, float radius)
     {
+        if (DistrictScene.TramPresent(_progress.DistrictEpisode, _progress.Day))
+            pos = OutsideBounds(pos, DistrictScene.TramBounds(_progress.DistrictEpisode), radius);
         foreach (var bounds in _buildingBounds)
         {
             float bx1 = bounds.Min.X - radius;
@@ -291,19 +340,41 @@ public class CityRenderer : IDisposable
             else if (min == dTop) pos.Z = bz1;
             else pos.Z = bz2;
         }
+        pos.Y = CityGenerator.GroundHeight(pos.X, pos.Z);
+        return pos;
+    }
+
+    private static Vector3 OutsideBounds(Vector3 pos, Box2 bounds, float radius)
+    {
+        float left = bounds.Min.X - radius, right = bounds.Max.X + radius;
+        float top = bounds.Min.Y - radius, bottom = bounds.Max.Y + radius;
+        if (pos.X <= left || pos.X >= right || pos.Z <= top || pos.Z >= bottom) return pos;
+        float min = Math.Min(Math.Min(pos.X-left,right-pos.X), Math.Min(pos.Z-top,bottom-pos.Z));
+        if (min == pos.X-left) pos.X = left;
+        else if (min == right-pos.X) pos.X = right;
+        else if (min == pos.Z-top) pos.Z = top;
+        else pos.Z = bottom;
         return pos;
     }
 
     public Vector3 AdjustForNpcCollision(Vector3 pos, float radius, NpcCharacter? self = null)
     {
+        if (_inside && self == _player) return pos;
         for (int i = 0; i < _npcs.Count; i++)
         {
-            if (_npcs[i] == self) continue;
-            if (_npcs[i].State == NpcState.Sleeping) continue;
+            if (_npcs[i] == self || (_inside && _npcs[i] == _player)) continue;
             Vector3 diff = pos - _npcs[i].Position;
             float distSq = diff.LengthSquared;
             float minDist = radius + 0.35f;
             if (distSq >= minDist * minDist) continue;
+            if (distSq < 0.0001f)
+            {
+                Vector3 escape = self == null ? Vector3.UnitX : self.Position - _npcs[i].Position;
+                escape.Y = 0;
+                if (escape.LengthSquared < 0.0001f) escape = Vector3.UnitX;
+                pos += Vector3.Normalize(escape) * minDist;
+                continue;
+            }
             float dist = MathF.Sqrt(Math.Max(distSq, 0.0001f));
             float overlap = (minDist - dist) / dist;
             pos += diff * overlap;
@@ -326,6 +397,121 @@ public class CityRenderer : IDisposable
         return true;
     }
 
+    public Vector3 ResolveCameraPosition(Vector3 focus, Vector3 desired, float radius = 0.3f)
+    {
+        if (_inside && _insideBlock is CityBlock interior)
+        {
+            const float wallPadding = 0.45f;
+            desired.X = Math.Clamp(desired.X, interior.X + wallPadding, interior.X + interior.Width - wallPadding);
+            desired.Y = Math.Clamp(desired.Y, 0.45f, 2.65f);
+            desired.Z = Math.Clamp(desired.Z, interior.Z + wallPadding, interior.Z + interior.Depth - wallPadding);
+            return desired;
+        }
+
+        Vector3 delta = desired - focus;
+        float distance = delta.Length;
+        if (distance < 0.001f)
+            return desired;
+
+        Vector3 resolved = ResolveCameraRay(focus, desired, radius);
+        const float minimumUsefulDistance = 2.4f;
+        if (Vector3.DistanceSquared(focus, resolved) >= minimumUsefulDistance * minimumUsefulDistance)
+            return resolved;
+
+        Vector3 best = resolved;
+        float bestDistanceSquared = Vector3.DistanceSquared(focus, resolved);
+        float[] alternativeAngles = { 35f, -35f, 70f, -70f, 180f };
+        foreach (float angle in alternativeAngles)
+        {
+            float radians = MathHelper.DegreesToRadians(angle);
+            float sin = MathF.Sin(radians);
+            float cos = MathF.Cos(radians);
+            Vector3 alternativeOffset = new(
+                delta.X * cos - delta.Z * sin,
+                delta.Y,
+                delta.X * sin + delta.Z * cos);
+            Vector3 candidate = ResolveCameraRay(focus, focus + alternativeOffset, radius);
+            float candidateDistanceSquared = Vector3.DistanceSquared(focus, candidate);
+            if (candidateDistanceSquared <= bestDistanceSquared)
+                continue;
+
+            best = candidate;
+            bestDistanceSquared = candidateDistanceSquared;
+            if (bestDistanceSquared >= distance * distance * 0.9f)
+                break;
+        }
+
+        return best;
+    }
+
+    private Vector3 ResolveCameraRay(Vector3 focus, Vector3 desired, float radius)
+    {
+        Vector3 delta = desired - focus;
+        float distance = delta.Length;
+        if (distance < 0.001f)
+            return desired;
+
+        float nearestHit = 1f;
+        foreach (var block in _blocks)
+        {
+            if (block.Type == BuildingType.Tree || block.Type == BuildingType.Lamp)
+                continue;
+
+            Vector3 min = new(
+                block.X + 0.5f - radius,
+                -radius,
+                block.Z + 0.5f - radius);
+            Vector3 max = new(
+                block.X + block.Width - 0.5f + radius,
+                block.Height * 2.5f + 0.35f + radius,
+                block.Z + block.Depth - 0.5f + radius);
+
+            if (SegmentIntersectsBox(focus, desired, min, max, out float hit) && hit < nearestHit)
+                nearestHit = hit;
+        }
+
+        if (nearestHit >= 1f)
+            return desired;
+
+        const float surfaceGap = 0.18f;
+        float safeHit = Math.Max(0.04f, nearestHit - surfaceGap / distance);
+        return focus + delta * safeHit;
+    }
+
+    internal static bool SegmentIntersectsBox(Vector3 start, Vector3 end, Vector3 min, Vector3 max, out float entry)
+    {
+        Vector3 delta = end - start;
+        float first = 0f;
+        float last = 1f;
+
+        if (!ClipAxis(start.X, delta.X, min.X, max.X, ref first, ref last) ||
+            !ClipAxis(start.Y, delta.Y, min.Y, max.Y, ref first, ref last) ||
+            !ClipAxis(start.Z, delta.Z, min.Z, max.Z, ref first, ref last))
+        {
+            entry = 1f;
+            return false;
+        }
+
+        entry = first;
+        return first <= last && last >= 0f && first <= 1f;
+    }
+
+    private static bool ClipAxis(float origin, float direction, float min, float max, ref float first, ref float last)
+    {
+        if (MathF.Abs(direction) < 0.00001f)
+            return origin >= min && origin <= max;
+
+        float inverse = 1f / direction;
+        float near = (min - origin) * inverse;
+        float far = (max - origin) * inverse;
+        if (near > far)
+            (near, far) = (far, near);
+
+        first = Math.Max(first, near);
+        last = Math.Min(last, far);
+        return first <= last;
+    }
+
     public HeroProgress Progress => _progress;
     public int Seed => _seed;
     public IReadOnlyList<CityBlock> Blocks => _blocks;
@@ -339,13 +525,17 @@ public class CityRenderer : IDisposable
         _windowGpuBytes +
         _npcGpuCapacityBytes +
         _highlightGpuBytes +
-        _interiorGpuBytes;
+        _interiorGpuBytes +
+        _sceneryGpuBytes + _facadeGpuBytes + _glassGpuBytes + _districtGpuBytes + _tramGpuBytes;
+
+    public long EstimatedGpuTextureBytes => _materials.TextureBytes + _shadows.TextureBytes;
 
     public IReadOnlyList<NpcCharacter> Npcs => _npcs;
     public int NpcCount => _npcs.Count;
     public NpcCharacter? Player => _player;
+    public bool HidePlayerForCamera { get; set; }
     public AwarenessSystem Awareness => _awareness;
-    public float TimeOfDay { get => _timeOfDay; set => _timeOfDay = value; }
+    public float TimeOfDay { get => _timeOfDay; set { _timeOfDay = value; _progress.DistrictEpisode.CurrentTime = value; } }
 
     public CityRenderer(int seed, HeroProgress? progress = null)
     {
@@ -361,25 +551,87 @@ public class CityRenderer : IDisposable
                 block.Z + buildingInset,
                 block.X + block.Width - buildingInset,
                 block.Z + block.Depth - buildingInset));
+            _buildingBounds.Add(CityStreetProps.ParkedCarBounds(block));
         }
         BuildInterestMarkers();
+        _buildingBounds.AddRange(DistrictScene.PropBounds);
+        Navigation = new StreetNavigation(_buildingBounds);
         SpawnNpcs(seed);
+        PlaceDistrictActors();
+    }
+
+    private void PlaceDistrictActors()
+    {
+        _npcs[1].Position = FirstDistrictEpisode.Stop;
+        _npcs[2].Position = _progress.Day == 1 ? _progress.DistrictEpisode.MarkPosition :
+            MemoryRuntime.Current.HasPersisted(FirstDistrictStory.MeetingEventId) ? FirstDistrictEpisode.MarkMeeting : FirstDistrictEpisode.MarkStart;
+        if (_progress.Day >= 2) _npcs[3].Position = DistrictArchiveStory.NikaPosition;
+    }
+
+    private bool IsDistrictActor(NpcCharacter npc) => npc.Id is 1 or 2 || npc.Id == 3 && _progress.Day >= 2;
+
+    internal void UpdateDistrict(float dt)
+    {
+        bool wasBlocked = _progress.DistrictEpisode.TramBlocked;
+        _progress.DistrictEpisode.CurrentTime = _timeOfDay;
+        _progress.DistrictEpisode.Update(this, dt);
+        if (!wasBlocked && _progress.DistrictEpisode.TramBlocked)
+        {
+            _feedbackMessage = "Рейс ждёт: человек на путях.";
+            _feedbackTimer = 4f;
+            _feedbackColor = new(0.95f,0.72f,0.32f);
+        }
+    }
+
+    public bool InteractWithDistrict(DistrictInteraction interaction)
+    {
+        if (_player == null || _inside || _progress.DistrictEpisode.Detect(_player.Position, _progress.Day) != interaction) return false;
+        var episode = _progress.DistrictEpisode;
+        switch (interaction)
+        {
+            case DistrictInteraction.Signal:
+                bool changed = episode.ActivateSignal(_player.Position, _timeOfDay, _progress.Day);
+                if (changed) _progress.DiscoverEgg("district1.signal-action", memoryGain: 1, curiosityGain: 0, agencyGain: 2);
+                _feedbackMessage = episode.SignalText(_progress.Day);
+                break;
+            case DistrictInteraction.Trace:
+                _feedbackMessage = episode.TraceText(_progress.Day);
+                break;
+            case DistrictInteraction.Rest:
+                AdvanceDayClock((24f - _timeOfDay + 0.01f) / 0.03f);
+                TimeOfDay = 8f;
+                _player.Velocity = Vector3.Zero;
+                _feedbackMessage = episode.TraceText(_progress.Day);
+                break;
+            default: return false;
+        }
+        _feedbackTimer = 6f;
+        _feedbackColor = new(0.82f,0.88f,0.72f);
+        return true;
     }
 
     private void SpawnNpcs(int seed)
     {
         var rng = new Random(seed);
+        var homes = new HashSet<Vector3>();
+        var workplaces = new HashSet<Vector3>();
         for (int i = 0; i < 50; i++)
         {
             float hx = (float)(rng.NextDouble() - 0.5) * 180f;
             float hz = (float)(rng.NextDouble() - 0.5) * 180f;
             float wx = (float)(rng.NextDouble() - 0.5) * 180f;
             float wz = (float)(rng.NextDouble() - 0.5) * 180f;
-            _npcs.Add(new NpcCharacter(new Vector3(hx, 0, hz), new Vector3(wx, 0, wz), seed + i * 397));
+            Vector3 home = Navigation.ClosestPoint(new Vector3(hx, 0, hz), homes);
+            Vector3 work = Navigation.ClosestPoint(new Vector3(wx, 0, wz), workplaces);
+            homes.Add(home);
+            workplaces.Add(work);
+            _npcs.Add(new NpcCharacter(home, work, seed + i * 397, id: i));
         }
 
         _player = _npcs[0];
         HeroStyle.ApplyTo(_player);
+        _player.Position = new Vector3(11.5f,0.12f,5);
+        _player.Rotation = _player.TargetRotation = 0;
     }
 
     private void PushCharactersApart()
@@ -387,10 +639,10 @@ public class CityRenderer : IDisposable
         const float minDist = 0.7f;
         for (int i = 0; i < _npcs.Count; i++)
         {
-            if (_npcs[i].State == NpcState.Sleeping) continue;
+            if (_inside && _npcs[i] == _player) continue;
             for (int j = i + 1; j < _npcs.Count; j++)
             {
-                if (_npcs[j].State == NpcState.Sleeping) continue;
+                if (_inside && _npcs[j] == _player) continue;
 
                 Vector3 diff = _npcs[i].Position - _npcs[j].Position;
                 float distSq = diff.LengthSquared;
@@ -403,12 +655,13 @@ public class CityRenderer : IDisposable
                     dist = 0.01f;
                 }
 
-                float overlap = (minDist - dist) / dist * 0.5f;
-                Vector3 push = diff * overlap;
-                _npcs[i].Position += push;
-                _npcs[i].Position = ClampToWalkable(_npcs[i].Position, 0.3f);
-                _npcs[j].Position -= push;
-                _npcs[j].Position = ClampToWalkable(_npcs[j].Position, 0.3f);
+                bool fixedI = _npcs[i] == _player || IsDistrictActor(_npcs[i]);
+                bool fixedJ = _npcs[j] == _player || IsDistrictActor(_npcs[j]);
+                Vector3 push = diff * ((minDist - dist) / dist);
+                if (!fixedI)
+                    _npcs[i].Position = ClampToWalkable(_npcs[i].Position + push * (fixedJ ? 1f : 0.5f), 0.3f);
+                if (!fixedJ)
+                    _npcs[j].Position = ClampToWalkable(_npcs[j].Position - push * (fixedI ? 1f : 0.5f), 0.3f);
             }
         }
     }
@@ -479,156 +732,151 @@ public class CityRenderer : IDisposable
 
     private void BuildRoads()
     {
-        var v = new List<float>();
-        int half = CityGenerator.CityRadius * (CityGenerator.BlockSize + CityGenerator.RoadWidth) + CityGenerator.BlockSize;
-
-        for (int dx = -CityGenerator.CityRadius; dx <= CityGenerator.CityRadius; dx++)
-        {
-            float rx = dx * (CityGenerator.BlockSize + CityGenerator.RoadWidth) - CityGenerator.RoadWidth / 2f;
-            Quad(ref v, rx, 0.01f, -half, rx + CityGenerator.RoadWidth, 0.01f, -half,
-                         rx + CityGenerator.RoadWidth, 0.01f, half, rx, 0.01f, half,
-                         0.15f, 0.15f, 0.15f);
-        }
-
-        for (int dz = -CityGenerator.CityRadius; dz <= CityGenerator.CityRadius; dz++)
-        {
-            float rz = dz * (CityGenerator.BlockSize + CityGenerator.RoadWidth) - CityGenerator.RoadWidth / 2f;
-            Quad(ref v, -half, 0.01f, rz, half, 0.01f, rz,
-                         half, 0.01f, rz + CityGenerator.RoadWidth, -half, 0.01f, rz + CityGenerator.RoadWidth,
-                         0.15f, 0.15f, 0.15f);
-        }
-
-        Upload(ref _roadVao, ref _roadVbo, ref _roadCount, ref _roadGpuBytes, v);
+        var vertices = CityStreets.BuildRoads();
+        Upload(ref _roadVao, ref _roadVbo, ref _roadCount, ref _roadGpuBytes, vertices);
     }
 
     private void BuildSidewalks()
     {
-        var v = new List<float>();
-        int half = CityGenerator.CityRadius * (CityGenerator.BlockSize + CityGenerator.RoadWidth) + CityGenerator.BlockSize;
-
-        for (int dx = -CityGenerator.CityRadius; dx <= CityGenerator.CityRadius; dx++)
-        {
-            float rx = dx * (CityGenerator.BlockSize + CityGenerator.RoadWidth);
-            // тротуар слева от дороги
-            Quad(ref v, rx - CityGenerator.RoadWidth / 2f - CityGenerator.SidewalkW, 0.02f, -half,
-                         rx - CityGenerator.RoadWidth / 2f, 0.02f, -half,
-                         rx - CityGenerator.RoadWidth / 2f, 0.02f, half,
-                         rx - CityGenerator.RoadWidth / 2f - CityGenerator.SidewalkW, 0.02f, half,
-                         0.55f, 0.55f, 0.55f);
-            // тротуар справа от дороги
-            Quad(ref v, rx + CityGenerator.RoadWidth / 2f, 0.02f, -half,
-                         rx + CityGenerator.RoadWidth / 2f + CityGenerator.SidewalkW, 0.02f, -half,
-                         rx + CityGenerator.RoadWidth / 2f + CityGenerator.SidewalkW, 0.02f, half,
-                         rx + CityGenerator.RoadWidth / 2f, 0.02f, half,
-                         0.55f, 0.55f, 0.55f);
-        }
-
-        for (int dz = -CityGenerator.CityRadius; dz <= CityGenerator.CityRadius; dz++)
-        {
-            float rz = dz * (CityGenerator.BlockSize + CityGenerator.RoadWidth);
-            Quad(ref v, -half, 0.02f, rz - CityGenerator.RoadWidth / 2f - CityGenerator.SidewalkW,
-                         half, 0.02f, rz - CityGenerator.RoadWidth / 2f - CityGenerator.SidewalkW,
-                         half, 0.02f, rz - CityGenerator.RoadWidth / 2f,
-                         -half, 0.02f, rz - CityGenerator.RoadWidth / 2f,
-                         0.55f, 0.55f, 0.55f);
-            Quad(ref v, -half, 0.02f, rz + CityGenerator.RoadWidth / 2f,
-                         half, 0.02f, rz + CityGenerator.RoadWidth / 2f,
-                         half, 0.02f, rz + CityGenerator.RoadWidth / 2f + CityGenerator.SidewalkW,
-                         -half, 0.02f, rz + CityGenerator.RoadWidth / 2f + CityGenerator.SidewalkW,
-                         0.55f, 0.55f, 0.55f);
-        }
-
-        Upload(ref _sidewalkVao, ref _sidewalkVbo, ref _sidewalkCount, ref _sidewalkGpuBytes, v);
+        var vertices = CityStreets.BuildPaving(_blocks);
+        Upload(ref _sidewalkVao, ref _sidewalkVbo, ref _sidewalkCount, ref _sidewalkGpuBytes, vertices);
     }
 
     private void BuildBuildings()
     {
         var v = new List<float>();
-        var wv = new List<float>(); // ночные окна
-
-        float inset = 0.5f; // отступ от края блока для визуального разделения
-
+        var wv = new List<float>();
+        var fv = new List<float>();
+        var gv = new List<float>();
+        _facadeRanges.Clear(); _buildingRanges.Clear(); _windowRanges.Clear(); _glassRanges.Clear();
         foreach (var b in _blocks)
         {
-            if (b.Type == BuildingType.Tree || b.Type == BuildingType.Lamp) continue;
-
-            float x = b.X + inset, z = b.Z + inset;
-            float w = b.Width - inset * 2, d = b.Depth - inset * 2;
-            float h = b.Height * 2.5f;
-            var col = b.Color;
-            var acc = b.Accent;
-
-            Box(ref v, x, 0, z, w, h, d, col.X, col.Y, col.Z);
-
-            // Крыша
-            Quad(ref v, x - 0.3f, h, z - 0.3f, x + w + 0.3f, h, z - 0.3f,
-                         x + w + 0.3f, h, z + d + 0.3f, x - 0.3f, h, z + d + 0.3f,
-                         acc.X * 1.2f, acc.Y * 1.2f, acc.Z * 1.2f);
-
-            // Окна (квадратики на фасаде)
+            if (b.Type is BuildingType.Tree or BuildingType.Lamp) continue;
+            float x = b.X + 0.5f, z = b.Z + 0.5f;
+            float w = b.Width - 1, d = b.Depth - 1, h = b.Height * 2.5f;
+            int first = v.Count/9, windowFirst = wv.Count/9, facadeFirst = fv.Count/9, glassFirst = gv.Count/9;
+            bool stone = b.Type is BuildingType.Office or BuildingType.Bank or BuildingType.Police;
+            Vector3 wall = stone ? b.Color*0.5f+new Vector3(0.36f,0.37f,0.36f) :
+                Vector3.Lerp(new(0.86f,0.79f,0.73f),new(1.15f,1.11f,1.03f),b.Color.X);
+            SceneGeometry.Box(fv, new(x,0,z),new(w,h,d),wall);
+            SceneGeometry.Box(v, new(x-0.012f,0,z-0.012f),new(w+0.024f,0.28f,d+0.024f),b.Color*0.67f);
+            SceneGeometry.Box(v, new(x-0.08f,h-0.18f,z-0.08f),new(w+0.16f,0.20f,d+0.16f),b.Accent*0.75f);
+            SceneGeometry.Ground(v,x-0.1f,z-0.1f,w+0.2f,d+0.2f,h+0.03f,new(0.29f,0.33f,0.34f));
+            Vector3 trim = new(0.74f,0.77f,0.75f);
+            Vector3 frame = new(0.18f,0.24f,0.26f);
             var rng = new Random(b.X * 31 + b.Z * 17);
-            int maxWindows = Math.Max(1, (int)(w / 3f));
-            for (int f = 0; f < b.Height; f++)
+            for (int face = 0; face < 4; face++)
             {
-                float fy = 1f + f * 2.5f;
-                for (int wi = 0; wi < maxWindows; wi++)
-                {
-                    bool lit = rng.NextDouble() < 0.6f;
-                    float wx = x + 1f + wi * (w - 2f) / maxWindows;
-                    float winW = Math.Min(1f, (w - 2f) / maxWindows - 0.3f);
-                    // Передняя сторона — дневные окна
-                    Quad(ref v, wx, fy, z + d + 0.01f, wx + winW, fy, z + d + 0.01f,
-                                 wx + winW, fy + 1.5f, z + d + 0.01f, wx, fy + 1.5f, z + d + 0.01f,
-                                 0.5f, 0.6f, 0.8f);
-                    if (lit)
-                        Quad(ref wv, wx, fy, z + d + 0.02f, wx + winW, fy, z + d + 0.02f,
-                                     wx + winW, fy + 1.5f, z + d + 0.02f, wx, fy + 1.5f, z + d + 0.02f,
-                                     0.95f, 0.75f, 0.2f);
-                    // Задняя сторона — дневные окна
-                    Quad(ref v, wx + winW, fy, z - 0.01f, wx, fy, z - 0.01f,
-                                 wx, fy + 1.5f, z - 0.01f, wx + winW, fy + 1.5f, z - 0.01f,
-                                 0.5f, 0.6f, 0.8f);
-                    if (lit)
-                        Quad(ref wv, wx + winW, fy, z - 0.02f, wx, fy, z - 0.02f,
-                                     wx, fy + 1.5f, z - 0.02f, wx + winW, fy + 1.5f, z - 0.02f,
-                                     0.95f, 0.75f, 0.2f);
-                }
+                Vector3 origin = face switch {
+                    0 => new(x,0,z+d), 1 => new(x+w,0,z), 2 => new(x+w,0,z+d), _ => new(x,0,z) };
+                Vector3 horizontal = face switch { 0 => Vector3.UnitX, 1 => -Vector3.UnitX, 2 => -Vector3.UnitZ, _ => Vector3.UnitZ };
+                Vector3 normal = Vector3.Cross(horizontal,Vector3.UnitY);
+                float span = face < 2 ? w : d;
+                int columns = Math.Max(1,(int)(span/2.6f));
+                float spacing = span/columns;
+                for (int floor = 0; floor < b.Height; floor++)
+                    for (int column = 0; column < columns; column++)
+                    {
+                        float width = Math.Min(1.3f,spacing-0.6f);
+                        Vector3 at = origin + horizontal*(column*spacing+(spacing-width)*0.5f)
+                            + Vector3.UnitY*(0.75f+floor*2.5f);
+                        bool lit = rng.NextDouble() < 0.42;
+                        FaceRect(v,at-horizontal*0.08f-Vector3.UnitY*0.08f+normal*0.014f,horizontal,width+0.16f,1.51f,frame);
+                        Vector3 glass = Vector3.Lerp(new(0.27f,0.43f,0.51f),new(0.46f,0.65f,0.69f),(floor%3)/2f);
+                        FaceRect(gv,at+normal*0.021f,horizontal,width,1.35f,glass);
+                        FaceRect(v,at+normal*0.034f+horizontal*width*0.48f,horizontal,0.045f,1.35f,trim*0.8f);
+                        FaceRect(v,at+normal*0.035f+Vector3.UnitY*0.64f,horizontal,width,0.045f,trim*0.8f);
+                        FaceRect(v,at-horizontal*0.12f+normal*0.045f-Vector3.UnitY*0.13f,horizontal,width+0.24f,0.10f,trim);
+                        if (lit) FaceRect(wv,at+normal*0.025f,horizontal,width,1.35f,new(0.94f,0.77f,0.46f));
+                    }
             }
+            float doorX = x+w*0.5f;
+            FaceRect(v,new(doorX-0.7f,0.025f,z+d+0.055f),Vector3.UnitX,1.4f,2.15f,frame);
+            FaceRect(v,new(doorX-0.56f,0.13f,z+d+0.060f),Vector3.UnitX,1.12f,1.85f,new(0.32f,0.44f,0.47f));
+            FaceRect(v,new(doorX+0.37f,0.85f,z+d+0.065f),Vector3.UnitX,0.06f,0.30f,new(0.81f,0.76f,0.57f));
+            SceneGeometry.Box(v,new(doorX-1.05f,2.25f,z+d-0.02f),new(2.1f,0.13f,0.46f),b.Accent);
+            if (b.Type is BuildingType.Cafe or BuildingType.Store)
+            {
+                for (int stripe = 0; stripe < 6; stripe++)
+                    SceneGeometry.Box(v,new(doorX-1.5f+stripe*0.5f,2.4f,z+d),new(0.5f,0.16f,0.8f),
+                        stripe%2==0?b.Accent:new Vector3(0.85f,0.84f,0.74f));
+            }
+            CityFacadeDetails.Append(v,b);
+            Vector3 center = new(x+w/2,h/2,z+d/2);
+            float radius = MathF.Sqrt(w*w+d*d+h*h)*0.5f+3;
+            _facadeRanges.Add(new(facadeFirst,fv.Count/9-facadeFirst,center,radius,stone?6:1));
+            _buildingRanges.Add(new(first,v.Count/9-first,center,radius));
+            _windowRanges.Add(new(windowFirst,wv.Count/9-windowFirst,center,radius));
+            _glassRanges.Add(new(glassFirst,gv.Count/9-glassFirst,center,radius));
         }
+        Upload(ref _facadeVao,ref _facadeVbo,ref _facadeCount,ref _facadeGpuBytes,fv);
+        Upload(ref _glassVao,ref _glassVbo,ref _glassCount,ref _glassGpuBytes,gv);
+        Upload(ref _buildingVao,ref _buildingVbo,ref _buildingCount,ref _buildingGpuBytes,v);
+        Upload(ref _windowVao,ref _windowVbo,ref _windowCount,ref _windowGpuBytes,wv);
+    }
 
-        Upload(ref _buildingVao, ref _buildingVbo, ref _buildingCount, ref _buildingGpuBytes, v);
-        Upload(ref _windowVao, ref _windowVbo, ref _windowCount, ref _windowGpuBytes, wv);
+    private static void FaceRect(List<float> v, Vector3 origin, Vector3 horizontal, float width, float height, Vector3 color)
+    {
+        Vector3 side = horizontal * width, up = Vector3.UnitY * height;
+        SceneGeometry.Quad(v,origin,origin+side,origin+side+up,origin+up,color);
     }
 
     private void BuildTrees()
     {
-        _treePositions.Clear();
-        _treeTexture = Texture.CreateTree();
-        var rng = new Random(42);
-
-        for (int dx = -CityGenerator.CityRadius; dx <= CityGenerator.CityRadius; dx++)
+        var v = new List<float>();
+        _sceneryRanges.Clear();
+        foreach (var block in _blocks)
         {
-            float rx = dx * (CityGenerator.BlockSize + CityGenerator.RoadWidth) - CityGenerator.RoadWidth / 2f - 1f;
-            for (int dz = -CityGenerator.CityRadius; dz <= CityGenerator.CityRadius; dz++)
+            int first = v.Count/9;
+            CityStreetProps.Append(v,block);
+            if (block.Type is not (BuildingType.Tree or BuildingType.Lamp))
             {
-                float rz = dz * (CityGenerator.BlockSize + CityGenerator.RoadWidth) - CityGenerator.RoadWidth / 2f - 1f;
-                if (rng.NextDouble() < 0.4f)
-                {
-                    float tx = rx + (float)rng.NextDouble() * 2f - 1f;
-                    float tz = rz + (float)rng.NextDouble() * 2f - 1f;
-                    float scale = 0.9f + (float)rng.NextDouble() * 0.3f;
-                    _treePositions.Add((new Vector3(tx, 0f, tz), scale));
-                }
+                AddTree(block.X-1.6f,block.Z+4,0.85f);
+                _sceneryRanges.Add(new(first,v.Count/9-first,new(block.X+8,3,block.Z+5),17));
+                continue;
+            }
+            float x = block.X, z = block.Z;
+            SceneGeometry.Ground(v,x+1,z+1,block.Width-2,block.Depth-2,0.126f,new(0.26f,0.40f,0.27f));
+            SceneGeometry.Ground(v,x+4.1f,z,1.8f,block.Depth,0.13f,new(0.61f,0.63f,0.61f));
+            if (block.Type == BuildingType.Tree)
+            {
+                AddTree(x + 2.5f, z + 3, 1f);
+                AddTree(x + 7.4f, z + 6.5f, 0.85f);
+            }
+            else
+            {
+                Vector3 metal = new(0.18f, 0.24f, 0.25f);
+                SceneGeometry.Box(v, new(x+2,0,z+2), new(0.16f,3.5f,0.16f), metal);
+                SceneGeometry.Box(v, new(x+1.7f,3.4f,z+1.7f), new(0.76f,0.16f,0.76f), metal);
+                SceneGeometry.Box(v, new(x+1.83f,3.22f,z+1.83f), new(0.50f,0.2f,0.50f), new(0.94f,0.84f,0.56f));
+                AddTree(x+7, z+6, 0.9f);
+            }
+            Vector3 bench = new(0.39f,0.30f,0.25f);
+            SceneGeometry.Box(v,new(x+5.5f,0.42f,z+1.4f),new(2,0.12f,0.6f),bench);
+            SceneGeometry.Box(v,new(x+5.5f,0.7f,z+1.9f),new(2,0.45f,0.1f),bench);
+            SceneGeometry.Box(v,new(x+5.65f,0,z+1.5f),new(0.12f,0.5f,0.35f),bench*0.6f);
+            SceneGeometry.Box(v,new(x+7.2f,0,z+1.5f),new(0.12f,0.5f,0.35f),bench*0.6f);
+            _sceneryRanges.Add(new(first,v.Count/9-first,new(x+8,3,z+5),17));
+        }
+        Upload(ref _sceneryVao, ref _sceneryVbo, ref _sceneryCount, ref _sceneryGpuBytes, v);
+
+        void AddTree(float x, float z, float scale)
+        {
+            Vector3 root=new(x,0.12f,z), bark=new(0.29f,0.25f,0.21f);
+            SceneGeometry.Cylinder(v,root,root+new Vector3(0.12f,3.8f,0)*scale,0.14f*scale,bark);
+            for(int crown=0;crown<7;crown++)
+            {
+                float angle=crown*2.4f, spread=crown==0?0:1.12f;
+                Vector3 at=root+new Vector3(MathF.Cos(angle)*spread,4.15f+(crown%3)*0.46f,MathF.Sin(angle)*spread)*scale;
+                SceneGeometry.Cylinder(v,root+Vector3.UnitY*2.3f*scale,at,0.06f*scale,bark,6);
+                SceneGeometry.Foliage(v,at,new Vector3(1.10f,1.25f,1.08f)*scale,
+                    crown%2==0?new(0.26f,0.40f,0.23f):new(0.35f,0.49f,0.27f));
             }
         }
     }
 
-    public void UpdateNpcs(float dt)
+    internal void AdvanceDayClock(float dt)
     {
-        _animationTime += dt;
-        if (_feedbackTimer > 0f)
-            _feedbackTimer = Math.Max(0f, _feedbackTimer - dt);
-
         _timeOfDay += dt * 0.03f;
         if (_timeOfDay > 24f)
         {
@@ -641,15 +889,21 @@ public class CityRenderer : IDisposable
                 if (npc == _player) continue;
                 npc.Reset();
             }
+            PlaceDistrictActors();
         }
+        _progress.DistrictEpisode.CurrentTime = _timeOfDay;
+    }
 
-        foreach (var npc in _npcs)
-        {
-            if (npc == _player) continue;
-            npc.Update(_timeOfDay, dt);
-            if (npc.State != NpcState.Sleeping)
-                npc.Position = ClampToWalkable(npc.Position, 0.25f);
-        }
+    public void UpdateNpcs(float dt)
+    {
+        _animationTime += dt;
+        if (_feedbackTimer > 0f)
+            _feedbackTimer = Math.Max(0f, _feedbackTimer - dt);
+        AdvanceDayClock(dt);
+
+        UpdateCitizens(dt);
+
+        UpdateDistrict(dt);
 
         // --- Easter egg detection (per-frame) ---
         if (_player != null)
@@ -694,8 +948,6 @@ public class CityRenderer : IDisposable
 
         if (_player != null && _player.State != NpcState.Aware)
             _awareness.Update(_player, _timeOfDay, dt);
-
-        PushCharactersApart();
 
         BuildNpcMesh();
 
@@ -773,560 +1025,65 @@ public class CityRenderer : IDisposable
 
     private void BuildNpcMesh()
     {
-        _npcBufLen = 0;
-
-        void Emit(float v0, float v1, float v2, float v3, float v4, float v5, float v6, float v7, float v8)
-        {
-            if (_npcBufLen + FloatsPerVertex > _npcBuf.Length) Array.Resize(ref _npcBuf, _npcBuf.Length * 2);
-            _npcBuf[_npcBufLen++] = v0; _npcBuf[_npcBufLen++] = v1; _npcBuf[_npcBufLen++] = v2;
-            _npcBuf[_npcBufLen++] = v3; _npcBuf[_npcBufLen++] = v4; _npcBuf[_npcBufLen++] = v5;
-            _npcBuf[_npcBufLen++] = v6; _npcBuf[_npcBufLen++] = v7; _npcBuf[_npcBufLen++] = v8;
-        }
-
-        void EmitBox(float ax, float ay, float az, float bx, float by, float bz,
-            float cx, float cy, float cz, float dx, float dy, float dz,
-            float r, float g, float b, float shade, float nx, float ny, float nz)
-        {
-            float sr = r * shade, sg = g * shade, sb = b * shade;
-            Emit(ax, ay, az, sr, sg, sb, nx, ny, nz);
-            Emit(bx, by, bz, sr, sg, sb, nx, ny, nz);
-            Emit(cx, cy, cz, sr, sg, sb, nx, ny, nz);
-            Emit(ax, ay, az, sr, sg, sb, nx, ny, nz);
-            Emit(cx, cy, cz, sr, sg, sb, nx, ny, nz);
-            Emit(dx, dy, dz, sr, sg, sb, nx, ny, nz);
-        }
-
-        void AddEllipsoid(float cx, float cy, float cz, float rx, float ry, float rz, float cr, float cg, float cb, int segs, int rings)
-        {
-            for (int i = 0; i < rings; i++)
-            {
-                float theta1 = i * MathF.PI / rings;
-                float theta2 = (i + 1) * MathF.PI / rings;
-                for (int j = 0; j < segs; j++)
-                {
-                    float phi1 = j * 2f * MathF.PI / segs;
-                    float phi2 = (j + 1) * 2f * MathF.PI / segs;
-                    float x1 = cx + rx * MathF.Sin(theta1) * MathF.Cos(phi1);
-                    float y1 = cy + ry * MathF.Cos(theta1);
-                    float z1 = cz + rz * MathF.Sin(theta1) * MathF.Sin(phi1);
-                    Vector3 n1 = Vector3.Normalize(new((x1 - cx) / rx, (y1 - cy) / ry, (z1 - cz) / rz));
-                    float x2 = cx + rx * MathF.Sin(theta1) * MathF.Cos(phi2);
-                    float y2 = cy + ry * MathF.Cos(theta1);
-                    float z2 = cz + rz * MathF.Sin(theta1) * MathF.Sin(phi2);
-                    Vector3 n2 = Vector3.Normalize(new((x2 - cx) / rx, (y2 - cy) / ry, (z2 - cz) / rz));
-                    float x3 = cx + rx * MathF.Sin(theta2) * MathF.Cos(phi2);
-                    float y3 = cy + ry * MathF.Cos(theta2);
-                    float z3 = cz + rz * MathF.Sin(theta2) * MathF.Sin(phi2);
-                    Vector3 n3 = Vector3.Normalize(new((x3 - cx) / rx, (y3 - cy) / ry, (z3 - cz) / rz));
-                    float x4 = cx + rx * MathF.Sin(theta2) * MathF.Cos(phi1);
-                    float y4 = cy + ry * MathF.Cos(theta2);
-                    float z4 = cz + rz * MathF.Sin(theta2) * MathF.Sin(phi1);
-                    Vector3 n4 = Vector3.Normalize(new((x4 - cx) / rx, (y4 - cy) / ry, (z4 - cz) / rz));
-                    Emit(x1, y1, z1, cr, cg, cb, n1.X, n1.Y, n1.Z);
-                    Emit(x2, y2, z2, cr, cg, cb, n2.X, n2.Y, n2.Z);
-                    Emit(x3, y3, z3, cr, cg, cb, n3.X, n3.Y, n3.Z);
-                    Emit(x1, y1, z1, cr, cg, cb, n1.X, n1.Y, n1.Z);
-                    Emit(x3, y3, z3, cr, cg, cb, n3.X, n3.Y, n3.Z);
-                    Emit(x4, y4, z4, cr, cg, cb, n4.X, n4.Y, n4.Z);
-                }
-            }
-        }
-
-        void AddSphere(float cx, float cy, float cz, float r, float cr, float cg, float cb, int segs, int rings)
-        {
-            for (int i = 0; i < rings; i++)
-            {
-                float theta1 = i * MathF.PI / rings;
-                float theta2 = (i + 1) * MathF.PI / rings;
-                for (int j = 0; j < segs; j++)
-                {
-                    float phi1 = j * 2f * MathF.PI / segs;
-                    float phi2 = (j + 1) * 2f * MathF.PI / segs;
-                    float x1 = cx + r * MathF.Sin(theta1) * MathF.Cos(phi1);
-                    float y1 = cy + r * MathF.Cos(theta1);
-                    float z1 = cz + r * MathF.Sin(theta1) * MathF.Sin(phi1);
-                    Vector3 n1 = Vector3.Normalize(new(x1 - cx, y1 - cy, z1 - cz));
-                    float x2 = cx + r * MathF.Sin(theta1) * MathF.Cos(phi2);
-                    float y2 = cy + r * MathF.Cos(theta1);
-                    float z2 = cz + r * MathF.Sin(theta1) * MathF.Sin(phi2);
-                    Vector3 n2 = Vector3.Normalize(new(x2 - cx, y2 - cy, z2 - cz));
-                    float x3 = cx + r * MathF.Sin(theta2) * MathF.Cos(phi2);
-                    float y3 = cy + r * MathF.Cos(theta2);
-                    float z3 = cz + r * MathF.Sin(theta2) * MathF.Sin(phi2);
-                    Vector3 n3 = Vector3.Normalize(new(x3 - cx, y3 - cy, z3 - cz));
-                    float x4 = cx + r * MathF.Sin(theta2) * MathF.Cos(phi1);
-                    float y4 = cy + r * MathF.Cos(theta2);
-                    float z4 = cz + r * MathF.Sin(theta2) * MathF.Sin(phi1);
-                    Vector3 n4 = Vector3.Normalize(new(x4 - cx, y4 - cy, z4 - cz));
-                    Emit(x1, y1, z1, cr, cg, cb, n1.X, n1.Y, n1.Z);
-                    Emit(x2, y2, z2, cr, cg, cb, n2.X, n2.Y, n2.Z);
-                    Emit(x3, y3, z3, cr, cg, cb, n3.X, n3.Y, n3.Z);
-                    Emit(x1, y1, z1, cr, cg, cb, n1.X, n1.Y, n1.Z);
-                    Emit(x3, y3, z3, cr, cg, cb, n3.X, n3.Y, n3.Z);
-                    Emit(x4, y4, z4, cr, cg, cb, n4.X, n4.Y, n4.Z);
-                }
-            }
-        }
-
-        void AddTube(float cx, float cy, float cz, float rTop, float rBot, float h,
-            float cr, float cg, float cb, int segs,
-            float topOffX = 0f, float topOffZ = 0f,
-            float botOffX = 0f, float botOffZ = 0f)
-        {
-            if (h < 0.0001f) return;
-            float dr = rBot - rTop;
-            float ny = dr / h * 0.3f;
-            for (int i = 0; i < segs; i++)
-            {
-                float a1 = i * 2f * MathF.PI / segs;
-                float a2 = (i + 1) * 2f * MathF.PI / segs;
-                float nx1 = MathF.Cos(a1), nz1 = MathF.Sin(a1);
-                float nx2 = MathF.Cos(a2), nz2 = MathF.Sin(a2);
-                float ncx = (nx1 + nx2) * 0.5f;
-                float ncz = (nz1 + nz2) * 0.5f;
-                float nl = MathF.Sqrt(ncx * ncx + ncz * ncz + ny * ny);
-                float x1 = cx + rBot * nx1 + botOffX, z1 = cz + rBot * nz1 + botOffZ;
-                float x2 = cx + rBot * nx2 + botOffX, z2 = cz + rBot * nz2 + botOffZ;
-                float x3 = cx + rTop * nx2 + topOffX, z3 = cz + rTop * nz2 + topOffZ;
-                float x4 = cx + rTop * nx1 + topOffX, z4 = cz + rTop * nz1 + topOffZ;
-                Emit(x1, cy, z1, cr, cg, cb, ncx / nl, ny / nl, ncz / nl);
-                Emit(x2, cy, z2, cr, cg, cb, ncx / nl, ny / nl, ncz / nl);
-                Emit(x3, cy + h, z3, cr, cg, cb, ncx / nl, ny / nl, ncz / nl);
-                Emit(x1, cy, z1, cr, cg, cb, ncx / nl, ny / nl, ncz / nl);
-                Emit(x3, cy + h, z3, cr, cg, cb, ncx / nl, ny / nl, ncz / nl);
-                Emit(x4, cy + h, z4, cr, cg, cb, ncx / nl, ny / nl, ncz / nl);
-            }
-        }
-
-        void AddHeroOutfitDetails(NpcCharacter npc, Vector3 center, Vector3 fwd, Vector3 rgt,
-            float h, float chestR, float waistR, float shoulderY, float hipY, float torsoH, float neckR, float bob,
-            float shoulderR, float hipR)
-        {
-            if (npc != _player) return;
-
-            float px = center.X, py = center.Y, pz = center.Z;
-            float hipToWaist = torsoH * 0.30f;
-
-            // Collar at neck base
-            float collarY = shoulderY + bob;
-            float collarH = h * 0.02f;
-            AddTube(px, collarY, pz, neckR * 0.9f, neckR * 1.3f, collarH,
-                HeroStyle.ShirtLight.X * 0.8f, HeroStyle.ShirtLight.Y * 0.8f, HeroStyle.ShirtLight.Z * 0.8f, 8);
-
-            // Belt at waist
-            float beltY = hipY + hipToWaist + bob;
-            float beltH = h * 0.015f;
-            AddTube(px, beltY, pz, waistR * 1.05f, waistR * 1.05f, beltH,
-                HeroStyle.Belt.X, HeroStyle.Belt.Y, HeroStyle.Belt.Z, 12);
-
-            // Belt buckle — local-space forward
-            float buckleW = h * 0.018f;
-            Vector3 bc = center + fwd * (waistR * 1.02f);
-            bc.Y = beltY;
-            EmitBox(bc.X - rgt.X * buckleW, bc.Y, bc.Z - rgt.Z * buckleW,
-                    bc.X + rgt.X * buckleW, bc.Y, bc.Z + rgt.Z * buckleW,
-                    bc.X + rgt.X * buckleW, bc.Y + beltH, bc.Z + rgt.Z * buckleW,
-                    bc.X - rgt.X * buckleW, bc.Y + beltH, bc.Z - rgt.Z * buckleW,
-                    HeroStyle.Accent.X, HeroStyle.Accent.Y, HeroStyle.Accent.Z, 1.0f, 0, 0, 1);
-
-            // Shirt buttons — local-space forward
-            float btnR = h * 0.006f;
-            int btnCount = 3;
-            float btnStartY = shoulderY - torsoH * 0.1f + bob;
-            float btnEndY = hipY + hipToWaist + beltH + bob;
-            for (int i = 0; i < btnCount; i++)
-            {
-                float t = (i + 1f) / (btnCount + 1);
-                float btnY = btnStartY + (btnEndY - btnStartY) * t;
-                Vector3 btnPos = center + fwd * (chestR * 1.02f);
-                btnPos.Y = btnY;
-                AddSphere(btnPos.X, btnPos.Y, btnPos.Z, btnR,
-                    HeroStyle.ShirtLight.X * 0.7f, HeroStyle.ShirtLight.Y * 0.7f, HeroStyle.ShirtLight.Z * 0.7f, 6, 3);
-            }
-
-            // Cyan badge on left chest — local-space
-            float badgeS = h * 0.012f;
-            Vector3 badgeCenter = center + fwd * (chestR * 1.04f) - rgt * (chestR * 0.28f);
-            badgeCenter.Y = shoulderY - torsoH * 0.25f + bob;
-            EmitBox(badgeCenter.X - rgt.X * badgeS, badgeCenter.Y, badgeCenter.Z - rgt.Z * badgeS,
-                    badgeCenter.X + rgt.X * badgeS, badgeCenter.Y, badgeCenter.Z + rgt.Z * badgeS,
-                    badgeCenter.X + rgt.X * badgeS, badgeCenter.Y + badgeS * 1.5f, badgeCenter.Z + rgt.Z * badgeS,
-                    badgeCenter.X - rgt.X * badgeS, badgeCenter.Y + badgeS * 1.5f, badgeCenter.Z - rgt.Z * badgeS,
-                    HeroStyle.Accent.X, HeroStyle.Accent.Y, HeroStyle.Accent.Z, 1.0f, 0, 0, 1);
-
-            // Diagonal strap (left shoulder → right hip) — local-space
-            float strapW = h * 0.006f;
-            float strapThick = h * 0.0045f;
-            float strapStartY = shoulderY + bob;
-            float strapEndY = hipY + hipToWaist + bob;
-            Vector3 strapStart = center - rgt * (shoulderR * 0.6f) + fwd * (chestR * 0.25f);
-            Vector3 strapEnd = center + rgt * (hipR * 0.45f) + fwd * (chestR * 0.1f);
-            strapStart.Y = strapStartY;
-            strapEnd.Y = strapEndY;
-            Vector3 strapDir = strapEnd - strapStart;
-            float strapLen = strapDir.Length;
-            if (strapLen > 0.01f)
-            {
-                strapDir /= strapLen;
-                Vector3 perp = Vector3.Cross(strapDir, fwd);
-                perp.Normalize();
-                Vector3 perp2 = Vector3.Cross(strapDir, perp);
-                perp2.Normalize();
-
-                void Svert(Vector3 a, Vector3 b, Vector3 c, Vector3 d)
-                {
-                    Emit(a.X, a.Y, a.Z, HeroStyle.Strap.X, HeroStyle.Strap.Y, HeroStyle.Strap.Z, perp.X, perp.Y, perp.Z);
-                    Emit(b.X, b.Y, b.Z, HeroStyle.Strap.X, HeroStyle.Strap.Y, HeroStyle.Strap.Z, perp.X, perp.Y, perp.Z);
-                    Emit(c.X, c.Y, c.Z, HeroStyle.Strap.X, HeroStyle.Strap.Y, HeroStyle.Strap.Z, perp.X, perp.Y, perp.Z);
-                    Emit(a.X, a.Y, a.Z, HeroStyle.Strap.X, HeroStyle.Strap.Y, HeroStyle.Strap.Z, perp.X, perp.Y, perp.Z);
-                    Emit(c.X, c.Y, c.Z, HeroStyle.Strap.X, HeroStyle.Strap.Y, HeroStyle.Strap.Z, perp.X, perp.Y, perp.Z);
-                    Emit(d.X, d.Y, d.Z, HeroStyle.Strap.X, HeroStyle.Strap.Y, HeroStyle.Strap.Z, perp.X, perp.Y, perp.Z);
-                }
-
-                Vector3 hw = perp * (strapW * 0.5f);
-                Vector3 ht = perp2 * (strapThick * 0.5f);
-                for (int seg = 0; seg < 4; seg++)
-                {
-                    float t0 = seg / 4f;
-                    float t1 = (seg + 1f) / 4f;
-                    Vector3 p0 = strapStart + strapDir * (strapLen * t0);
-                    Vector3 p1 = strapStart + strapDir * (strapLen * t1);
-                    Svert(p0 - hw - ht, p0 + hw - ht, p1 + hw - ht, p1 - hw - ht);
-                    Svert(p0 - hw + ht, p0 + hw + ht, p1 + hw + ht, p1 - hw + ht);
-                    Svert(p0 - hw - ht, p0 - hw + ht, p1 - hw + ht, p1 - hw - ht);
-                    Svert(p0 + hw - ht, p0 + hw + ht, p1 + hw + ht, p1 + hw - ht);
-                }
-            }
-        }
-
+        _characterMesh.Clear();
         foreach (var npc in _npcs)
         {
-            float px = npc.Position.X, py = npc.Position.Y, pz = npc.Position.Z;
-            float h = npc.Height;
-            var c = npc.Color;
-            var hc = npc.HeadColor;
-            var pants = npc.PantsColor;
-
-            // --- Animation system ---
-            float phase = npc.AnimPhase;
-            float blend = npc.AnimBlend;
-            float idleFactor = 1f - blend;
-            bool isHero = HeroStyle.IsHero(npc);
-
-            // Sprint detection (hero-only): phase speed relative to walk baseline
-            float sprintFactor = 0f;
-            if (isHero && blend > 0.9f)
-            {
-                float phaseRate = 3.5f * MathF.Abs(npc.Velocity.LengthFast);
-                float walkBaseline = 3.5f * 8f;
-                sprintFactor = MathF.Max(0f, phaseRate / walkBaseline - 1f);
-                sprintFactor = MathF.Min(sprintFactor, 1.5f);
-            }
-
-            // Hero idle: layered breathing with multiple frequencies
-            float breatheHero = 0f;
-            if (isHero && idleFactor > 0.01f)
-            {
-                float t = _animationTime;
-                float heroPhase = npc.Id * 1.7f;
-                float breatheA = MathF.Sin(t * 1.8f + heroPhase) * 0.005f;
-                float breatheB = MathF.Sin(t * 2.6f + heroPhase * 0.7f) * 0.003f;
-                float breatheC = MathF.Sin(t * 1.1f + heroPhase * 1.3f) * 0.002f;
-                breatheHero = (breatheA + breatheB + breatheC) * idleFactor;
-            }
-            float breathe = isHero ? breatheHero : MathF.Sin(_animationTime * 2f + npc.Id * 1.7f) * 0.004f;
-
-            // Walk cycle
-            float legPhase = MathF.Sin(phase);
-            float cosPhase = MathF.Cos(phase);
-            float bodyBobRaw = MathF.Abs(legPhase);
-            float bodyBobWalk = (bodyBobRaw * bodyBobRaw * (3f - 2f * bodyBobRaw)) * 0.03f;
-            float bodyBob = bodyBobWalk * blend + breathe;
-
-            // Walk amplitude with sprint boost
-            float walkAmp = 0.14f * blend * (1f + sprintFactor * 0.3f);
-            float swingAmt = legPhase * walkAmp;
-
-            // Slight lateral lean during walk
-            float torsoLean = cosPhase * 0.012f * blend;
-
-            // Direction-aware offsets
-            float fwdX = MathF.Sin(npc.Rotation);
-            float fwdZ = MathF.Cos(npc.Rotation);
-            float rightX = MathF.Cos(npc.Rotation);
-            float rightZ = -MathF.Sin(npc.Rotation);
-
-            float legOffX = fwdX * swingAmt;
-            float legOffZ = fwdZ * swingAmt;
-
-            // Arm swing: wider arc, slight lateral component
-            float armSwingFwd = MathF.Sin(phase + MathF.PI) * 0.12f * blend * (1f + sprintFactor * 0.4f);
-            float armSwingSide = cosPhase * 0.015f * blend;
-            float armOffX = fwdX * armSwingFwd + rightX * armSwingSide;
-            float armOffZ = fwdZ * armSwingFwd + rightZ * armSwingSide;
-
-            // Hero sprint: slight forward lean
-            float sprintLean = sprintFactor * 0.008f;
-
-            // === PROPORTIONS (ground-up, exact) ===
-            float ankleY = h * 0.018f;
-            float shinH = h * 0.176f;
-            float kneeY = ankleY + shinH;
-            float thighH = h * 0.294f;
-            float hipY = kneeY + thighH;
-            float torsoH = h * 0.229f;
-            float shoulderY = hipY + torsoH;
-            float neckH = h * 0.035f;
-            float headY = shoulderY + neckH + h * 0.095f;
-
-            float shoulderR = h * 0.205f;
-            float waistR = h * 0.14f;
-            float hipR = h * 0.18f;
-            float headR = h * 0.11f;
-            float neckR = h * 0.045f;
-            float armRTop = h * 0.036f;
-            float armRBot = h * 0.024f;
-            float armH = h * 0.20f;
-            float foreH = h * 0.20f;
-            float handR = h * 0.032f;
-            float legRTop = h * 0.06f;
-            float legRBot = h * 0.038f;
-            float footW = h * 0.07f;
-            float footH = h * 0.03f;
-            float footD = h * 0.11f;
-
-            int segs = 10;
-
-            // Apply body bob to all Y
-            float bob = bodyBob;
-
-            // === LEGS === two-segment (thigh + shin) with knee joint
-            float leftPhase = MathF.Sin(phase);
-            float rightPhase = MathF.Sin(phase + MathF.PI);
-
-            // Hip sway (subtle rotation)
-            float hipSway = leftPhase * 0.03f * blend;
-            float hipOffX = fwdX * hipSway;
-            float hipOffZ = fwdZ * hipSway;
-
-            // Per-leg helpers
-            void BuildLeg(float side, float legPhaseVal)
-            {
-                float cx = px + side * hipR * 0.6f;
-
-                // Foot swing forward/back
-                float footSw = legPhaseVal * 0.12f * blend;
-                float footOffX = fwdX * footSw;
-                float footOffZ = fwdZ * footSw;
-
-                // Foot lift (rises during swing)
-                float footLift = MathF.Max(0f, -legPhaseVal) * 0.10f * blend;
-
-                // Knee bend (moves back when foot lifts)
-                float kneeBend = MathF.Max(0f, -legPhaseVal) * 0.07f * blend;
-                float kneeOffX = -fwdX * kneeBend;
-                float kneeOffZ = -fwdZ * kneeBend;
-
-                // Opposite hip sway
-                float oppHipSway = legPhaseVal * 0.03f * blend;
-                float oppHipOffX = fwdX * oppHipSway;
-                float oppHipOffZ = fwdZ * oppHipSway;
-
-                // Shin (ankle → knee)
-                float shH = Math.Max(0.01f, shinH - footLift);
-                float kneeR = legRBot * 1.35f;
-                AddTube(cx, ankleY + bob + footLift, pz, kneeR, legRBot, shH,
-                    pants.X, pants.Y, pants.Z, segs,
-                    kneeOffX, kneeOffZ,   // top (knee) offset
-                    footOffX, footOffZ);  // bottom (foot) offset
-
-                // Thigh (knee → hip)
-                AddTube(cx, kneeY + bob, pz, legRTop, kneeR, thighH,
-                    pants.X * 0.92f, pants.Y * 0.92f, pants.Z * 0.92f, segs,
-                    oppHipOffX, oppHipOffZ,  // top (hip) offset
-                    kneeOffX, kneeOffZ);     // bottom (knee) offset
-
-                // Feet follow foot offset + lift
-                float fy = ankleY + bob + footLift;
-                EmitBox(cx - footW * 0.5f + footOffX, fy, pz - footD * 0.5f + footOffZ,
-                        cx + footW * 0.5f + footOffX, fy, pz - footD * 0.5f + footOffZ,
-                        cx + footW * 0.5f + footOffX, fy + footH, pz - footD * 0.5f + footOffZ,
-                        cx - footW * 0.5f + footOffX, fy + footH, pz - footD * 0.5f + footOffZ,
-                        pants.X * 0.6f, pants.Y * 0.6f, pants.Z * 0.6f, 1.0f, 0, 0, 1);
-                AddEllipsoid(cx + footOffX, fy + footH * 0.5f, pz + footD * 0.08f + footOffZ,
-                    footW * 0.62f, footH * 0.78f, footD * 0.64f,
-                    pants.X * 0.52f, pants.Y * 0.52f, pants.Z * 0.52f, 10, 4);
-            }
-
-            BuildLeg(-1f, leftPhase);
-            BuildLeg(1f, rightPhase);
-
-            // === TORSO === 4 segments for natural S-curve (lordosis)
-            float hipToWaist = torsoH * 0.30f;
-            float waistToChest = torsoH * 0.35f;
-            float chestToShoulders = torsoH * 0.35f;
-
-            // Natural spine curve: chest forward (+Z), waist neutral, hips back (-Z)
-            float spineCurve = h * 0.03f;
-            float chestZOff = pz + spineCurve * 0.8f;
-            float hipZOff = pz - spineCurve * 0.3f;
-            float waistZOff = pz;
-
-            AddTube(px, hipY + bob, hipZOff, waistR * 1.1f, hipR, hipToWaist,
-                pants.X * 0.85f, pants.Y * 0.85f, pants.Z * 0.85f, segs,
-                0, 0, 0, 0);
-
-            float waistMidY = hipY + hipToWaist + bob;
-            AddTube(px, waistMidY, waistZOff, waistR, waistR * 1.1f, waistToChest,
-                c.X * 0.85f, c.Y * 0.8f, c.Z * 0.8f, segs,
-                0, 0, 0, 0);
-
-            float chestMidY = waistMidY + waistToChest;
-            float chestW = shoulderR * 0.85f;
-            float waistW = waistR;
-            AddTube(px, chestMidY, chestZOff, chestW, waistW, chestToShoulders,
-                c.X * 0.95f, c.Y * 0.88f, c.Z * 0.85f, segs,
-                0, 0, 0, 0);
-
-            // === SHOULDERS === (deltoid)
-            float shoulderS = shoulderR * 0.42f;
-            float shoulderZ = shoulderY + bob;
-            float shrCol = c.X * 0.9f, shgCol = c.Y * 0.82f, shbCol = c.Z * 0.78f;
-            float upperLeanX = rightX * torsoLean - fwdX * sprintLean;
-            float upperLeanZ = rightZ * torsoLean - fwdZ * sprintLean;
-            AddEllipsoid(px - shoulderR + upperLeanX, shoulderZ, pz + spineCurve * 0.4f + upperLeanZ, shoulderS, shoulderS * 0.7f, shoulderS * 0.6f,
-                shrCol, shgCol, shbCol, 8, 4);
-            AddEllipsoid(px + shoulderR + upperLeanX, shoulderZ, pz + spineCurve * 0.4f + upperLeanZ, shoulderS, shoulderS * 0.7f, shoulderS * 0.6f,
-                shrCol, shgCol, shbCol, 8, 4);
-
-            // === NECK === (trapezius taper: wider at base)
-            AddTube(px + upperLeanX * 0.6f, shoulderY + bob, pz + spineCurve * 0.5f + upperLeanZ * 0.6f, neckR, neckR * 1.5f, neckH,
-                hc.X * 0.85f, hc.Y * 0.8f, hc.Z * 0.78f, 8);
-
-            // === HEAD === ellipsoid (slightly tilted forward)
-            float headTilt = h * 0.01f;
-            float headLeanX = upperLeanX * 0.8f;
-            float headLeanZ = upperLeanZ * 0.8f;
-            float headCX = px + headLeanX, headCY = headY + bob, headCZ = pz + spineCurve * 0.6f - headTilt + headLeanZ;
-            float headRX = headR * 0.82f;
-            float headRY = headR * 1.15f;
-            float headRZ = headR * 0.95f;
-            AddEllipsoid(headCX, headCY, headCZ, headRX, headRY, headRZ, hc.X, hc.Y, hc.Z, 12, 8);
-
-            // === EYES ===
-            float eyeY = headCY + headRY * 0.2f;
-            float eyeZ = headCZ + headRZ * 0.75f;
-            float eyeR = HeroStyle.IsHero(npc) ? headR * 0.22f : headR * 0.18f;
-            float eyeOff = headRX * 0.4f;
-            Vector3 eyeCol = HeroStyle.IsHero(npc) ? HeroStyle.Eye : new Vector3(0.03f, 0.03f, 0.07f);
-            AddSphere(headCX - eyeOff, eyeY, eyeZ, eyeR, eyeCol.X, eyeCol.Y, eyeCol.Z, 8, 4);
-            AddSphere(headCX + eyeOff, eyeY, eyeZ, eyeR, eyeCol.X, eyeCol.Y, eyeCol.Z, 8, 4);
-
-            // === EYEBROWS ===
-            float browY = eyeY + headRY * 0.22f;
-            float browW = headRX * 0.18f;
-            float browH = headRY * 0.03f;
-            float browD = headRZ * 0.04f;
-            float browCol = hc.X * 0.15f;
-            EmitBox(headCX - eyeOff - browW * 0.5f, browY, eyeZ - browD,
-                    headCX - eyeOff + browW * 0.5f, browY, eyeZ - browD,
-                    headCX - eyeOff + browW * 0.5f, browY + browH, eyeZ - browD,
-                    headCX - eyeOff - browW * 0.5f, browY + browH, eyeZ - browD,
-                    browCol, browCol * 0.7f, browCol * 0.3f, 1.0f, 0, 0, 1);
-            EmitBox(headCX + eyeOff - browW * 0.5f, browY, eyeZ - browD,
-                    headCX + eyeOff + browW * 0.5f, browY, eyeZ - browD,
-                    headCX + eyeOff + browW * 0.5f, browY + browH, eyeZ - browD,
-                    headCX + eyeOff - browW * 0.5f, browY + browH, eyeZ - browD,
-                    browCol, browCol * 0.7f, browCol * 0.3f, 1.0f, 0, 0, 1);
-
-            // === MOUTH ===
-            float mouthY = headCY - headRY * 0.07f;
-            float mouthW = headRX * 0.2f;
-            float mouthH = headRY * 0.025f;
-            float mouthCol = hc.X * 0.5f;
-            EmitBox(headCX - mouthW, mouthY, eyeZ - headRZ * 0.05f,
-                    headCX + mouthW, mouthY, eyeZ - headRZ * 0.05f,
-                    headCX + mouthW, mouthY + mouthH, eyeZ - headRZ * 0.05f,
-                    headCX - mouthW, mouthY + mouthH, eyeZ - headRZ * 0.05f,
-                    mouthCol, mouthCol * 0.4f, mouthCol * 0.4f, 1.0f, 0, 0, 1);
-
-            // === HAIR ===
-            float hairY = headCY + headRY * 0.5f;
-            var hairCol = HeroStyle.IsHero(npc) ? HeroStyle.HairLight : npc.HairColor;
-            AddEllipsoid(headCX, hairY, headCZ, headRX * 1.05f, headRY * 0.25f, headRZ * 0.9f,
-                hairCol.X, hairCol.Y, hairCol.Z, 12, 4);
-
-            // === ARMS === two-segment (upper arm + forearm) with elbow joint
-            float armSkin = 0.92f;
-            float armCr = hc.X * armSkin, armCg = hc.Y * armSkin, armCb = hc.Z * armSkin;
-
-            void BuildArm(float side, float swingPhase)
-            {
-                float shoulderX = px + side * (shoulderR + armRTop * 0.15f);
-                float shoulderYPos = shoulderY + bob - shoulderS * 0.12f;
-
-                // Smoothed swing with sprint amplification
-                float swing = swingPhase * walkAmp * 0.85f;
-                float swingX = fwdX * swing + rightX * torsoLean * side;
-                float swingZ = fwdZ * swing + rightZ * torsoLean * side;
-
-                // Elbow bend: peaks when arm swings back, relaxes forward
-                float swingT = (swingPhase + 1f) * 0.5f;
-                float elbowBend = swingT * 0.14f * blend * (1f + sprintFactor * 0.3f);
-                float elbowOffX = -fwdX * elbowBend * side;
-                float elbowOffZ = -fwdZ * elbowBend;
-
-                // Upper arm (shoulder → elbow)
-                float elbowY = shoulderYPos - armH;
-                float uaTopR = armRTop, uaBotR = armRTop * 0.85f;
-                AddTube(shoulderX, elbowY, pz, uaBotR, uaTopR, armH,
-                    armCr * 0.95f, armCg * 0.95f, armCb * 0.95f, 8,
-                    elbowOffX, elbowOffZ,
-                    swingX, swingZ);
-
-                // Forearm (elbow → wrist) with follow-through
-                float wristYPos = elbowY - foreH;
-                float faTopR = armRTop * 0.85f, faBotR = armRBot;
-                float followPhase = swingPhase * 0.7f;
-                float fwdElbow = followPhase * 0.08f * blend * (1f + sprintFactor * 0.25f);
-                float fwdElbowX = fwdX * fwdElbow;
-                float fwdElbowZ = fwdZ * fwdElbow;
-                AddTube(shoulderX, wristYPos, pz, faBotR, faTopR, foreH,
-                    armCr, armCg, armCb, 8,
-                    fwdElbowX * 0.4f, fwdElbowZ * 0.4f,
-                    elbowOffX, elbowOffZ);
-
-                // Hand at wrist
-                float handX = shoulderX + fwdElbowX * 0.5f;
-                float handZ = pz + fwdElbowZ * 0.5f;
-                AddEllipsoid(handX, wristYPos - handR * 0.3f, handZ,
-                    handR * 0.8f, handR * 1.1f, handR * 0.7f,
-                    armCr, armCg, armCb, 6, 3);
-            }
-
-            BuildArm(-1f, MathF.Sin(phase + MathF.PI));
-            BuildArm(1f, MathF.Sin(phase));
-
-            AddHeroOutfitDetails(npc, new Vector3(px, py, pz),
-                new Vector3(fwdX, 0, fwdZ), new Vector3(rightX, 0, rightZ),
-                h, chestW, waistR, shoulderY, hipY, torsoH, neckR, bob, shoulderR, hipR);
-
-            if (npc == _player && npc.State == NpcState.Aware)
-            {
-                float ringY = py + h * 0.018f;
-                float r = h * 0.34f;
-                float t = h * 0.018f;
-                Vector3 aura = new(0.18f, 0.58f, 1.0f);
-                EmitBox(px - r, ringY, pz - r, px + r, ringY, pz - r, px + r, ringY, pz - r + t, px - r, ringY, pz - r + t, aura.X, aura.Y, aura.Z, 0.95f, 0, 1, 0);
-                EmitBox(px - r, ringY, pz + r - t, px + r, ringY, pz + r - t, px + r, ringY, pz + r, px - r, ringY, pz + r, aura.X, aura.Y, aura.Z, 0.85f, 0, 1, 0);
-                EmitBox(px - r, ringY, pz - r, px - r + t, ringY, pz - r, px - r + t, ringY, pz + r, px - r, ringY, pz + r, aura.X, aura.Y, aura.Z, 0.75f, 0, 1, 0);
-                EmitBox(px + r - t, ringY, pz - r, px + r, ringY, pz - r, px + r, ringY, pz + r, px + r - t, ringY, pz + r, aura.X, aura.Y, aura.Z, 0.75f, 0, 1, 0);
-                AddSphere(px, headY + headRY * 1.45f + bob, pz, h * 0.028f, aura.X, aura.Y, aura.Z, 8, 4);
-            }
+            if (npc == _player && HidePlayerForCamera) continue;
+            if (_inside && npc != _player) continue;
+            CharacterDetail detail = npc == _player || _player == null ? CharacterDetail.Full :
+                CharacterMesh.DetailForDistance(Vector3.DistanceSquared(npc.Position, CharacterViewPosition ?? _player.Position));
+            _characterMesh.Append(npc, _animationTime, detail: detail);
         }
 
-        _npcCount = _npcBufLen / FloatsPerVertex;
-        UploadDynamic(_npcBuf, _npcBufLen);
+        _npcCount = _characterMesh.VertexCount;
+        UploadDynamic(_characterMesh.Data, _characterMesh.FloatCount);
+    }
+
+    internal void UpdateCitizens(float dt)
+    {
+        if (dt <= 0) return;
+        Navigation.BeginStep();
+        Box2? tram = DistrictScene.TramPresent(_progress.DistrictEpisode, _progress.Day)
+            ? DistrictScene.TramBounds(_progress.DistrictEpisode) : null;
+        for (int i = 0; i < _npcs.Count; i++)
+        {
+            var npc = _npcs[i];
+            _npcStepStarts[i] = npc.Position;
+            if (npc == _player || IsDistrictActor(npc)) continue;
+            npc.UpdateSchedule(_timeOfDay, dt, Navigation, tram);
+            Vector3 before = _npcStepStarts[i];
+            Vector3 proposed = SteerAroundPeople(npc, before, npc.Position, tram);
+            npc.Position = Navigation.IsSegmentClear(before, proposed, tram) ? proposed : before;
+            npc.Position.Y = CityGenerator.GroundHeight(npc.Position.X, npc.Position.Z);
+        }
+        PushCharactersApart();
+        for (int i = 0; i < _npcs.Count; i++)
+            if (_npcs[i] != _player && !IsDistrictActor(_npcs[i]))
+                _npcs[i].UpdateMotion(_npcStepStarts[i], dt);
+    }
+
+    private Vector3 SteerAroundPeople(NpcCharacter self, Vector3 before, Vector3 proposed, Box2? tram)
+    {
+        Vector3 delta = proposed - before;
+        delta.Y = 0;
+        float distance = delta.Length;
+        if (distance < 0.0001f) return proposed;
+        Vector3 forward = delta / distance;
+        foreach (var other in _npcs)
+        {
+            if (other == self || _inside && other == _player) continue;
+            Vector3 offset = other.Position - before;
+            offset.Y = 0;
+            float ahead = Vector3.Dot(offset, forward);
+            if (ahead <= 0 || ahead > 1.6f || (offset - forward * ahead).LengthSquared > 0.64f) continue;
+            Vector3 right = new(forward.Z, 0, -forward.X);
+            Vector3 side = before + Vector3.Normalize(forward + right * 1.2f) * distance;
+            if (Navigation.IsSegmentClear(before, side, tram)) return side;
+            side = before + Vector3.Normalize(forward - right * 1.2f) * distance;
+            if (Navigation.IsSegmentClear(before, side, tram)) return side;
+            break;
+        }
+        return proposed;
     }
 
     private unsafe void UploadDynamic(float[] data, int len)
@@ -1360,51 +1117,121 @@ public class CityRenderer : IDisposable
 
     public void Render(CityRenderContext context, ref Matrix4 view, ref Matrix4 proj, Vector3 fogCol)
     {
+        if (_inside && _interiorCount == 0 && _insideBlock is CityBlock interior)
+            BuildInteriorGeometry(interior);
+        var districtState = (_progress.DistrictEpisode.Phase, _progress.Day, DistrictArchiveStory.Outcome);
+        if (!_inside && _districtMeshState != districtState)
+        {
+            Upload(ref _districtVao, ref _districtVbo, ref _districtCount, ref _districtGpuBytes, DistrictScene.Build(_progress.DistrictEpisode, _progress.Day));
+            _districtMeshState = districtState;
+        }
+        bool tramVisible = !_inside && DistrictScene.TramPresent(_progress.DistrictEpisode, _progress.Day);
+        if (tramVisible && _tramVao == 0)
+            Upload(ref _tramVao, ref _tramVbo, ref _tramCount, ref _tramGpuBytes, DistrictScene.BuildTram());
+        var tramModel = Matrix4.CreateTranslation(_progress.DistrictEpisode.TramOffset);
+        SceneLighting lighting = SceneLighting.At(_timeOfDay);
+        float shadowStrength = _inside || !ShadowsEnabled ? 0 : 1-lighting.WindowGlow;
+        Vector3 focus = _player?.Position ?? Vector3.Zero;
+        if (!_inside)
+        {
+            _materials.Load();
+            if (shadowStrength > 0.01f)
+            {
+                _shadows.Begin(focus,lighting.Sun);
+                try
+                {
+                    DrawShadow(_facadeVao,_facadeRanges,focus);
+                    DrawShadow(_buildingVao,_buildingRanges,focus);
+                    DrawShadow(_sceneryVao,_sceneryRanges,focus);
+                    if (_districtCount > 0) { GL.BindVertexArray(_districtVao); GL.DrawArrays(PrimitiveType.Triangles,0,_districtCount); }
+                    if (_npcCount > 0) { GL.BindVertexArray(_npcVao); GL.DrawArrays(PrimitiveType.Triangles,0,_npcCount); }
+                    if (tramVisible)
+                    {
+                        _shadows.SetModel(tramModel);
+                        GL.BindVertexArray(_tramVao); GL.DrawArrays(PrimitiveType.Triangles,0,_tramCount);
+                        _shadows.SetModel(Matrix4.Identity);
+                    }
+                }
+                finally { _shadows.End(); }
+            }
+            _materials.Bind();
+            _shadows.Bind();
+        }
         GL.UseProgram(context.Shader);
         var id = Matrix4.Identity;
-        GL.UniformMatrix4(context.ViewLocation, false, ref view);
-        GL.UniformMatrix4(context.ProjectionLocation, false, ref proj);
-        GL.UniformMatrix4(context.ModelLocation, false, ref id);
-        GL.Uniform3(context.ColorLocation, -1f, -1f, -1f);
-        GL.Uniform3(context.FogColorLocation, fogCol.X, fogCol.Y, fogCol.Z);
-
-        if (_inside)
+        var lightMatrix = _shadows.LightMatrix;
+        GL.UniformMatrix4(context.ViewLocation,false,ref view);
+        GL.UniformMatrix4(context.ProjectionLocation,false,ref proj);
+        GL.UniformMatrix4(context.ModelLocation,false,ref id);
+        GL.UniformMatrix4(context.LightMatrixLocation,false,ref lightMatrix);
+        GL.Uniform3(context.ColorLocation,-1f,-1f,-1f);
+        GL.Uniform3(context.FogColorLocation,fogCol);
+        GL.Uniform3(context.EyeLocation,view.Inverted().ExtractTranslation());
+        GL.Uniform1(context.FogDensityLocation,_inside?0f:0.010f);
+        GL.Uniform1(context.ShadowStrengthLocation,shadowStrength);
+        GL.Uniform1(context.DaylightLocation,_inside?1f:1-lighting.WindowGlow);
+        GL.Uniform1(context.WorldPassLocation,1);
+        GL.Uniform3(context.AmbientLocation,_inside?new Vector3(0.74f,0.72f,0.67f):lighting.Ambient);
+        try
         {
-            if (_interiorCount > 0)
+            if (_inside)
             {
-                GL.BindVertexArray(_interiorVao);
-                GL.DrawArrays(PrimitiveType.Triangles, 0, _interiorCount);
+                GL.Uniform1(context.MaterialLocation,0);
+                if (_interiorCount > 0) { GL.BindVertexArray(_interiorVao); GL.DrawArrays(PrimitiveType.Triangles,0,_interiorCount); }
             }
-            return;
+            else
+            {
+                GL.Uniform1(context.MaterialLocation,2);
+                GL.BindVertexArray(_roadVao); GL.DrawArrays(PrimitiveType.Triangles,0,_roadCount);
+                GL.Uniform1(context.MaterialLocation,3);
+                GL.BindVertexArray(_sidewalkVao); GL.DrawArrays(PrimitiveType.Triangles,0,_sidewalkCount);
+                DrawVisible(_facadeVao,_facadeRanges,view,proj,context.MaterialLocation);
+                GL.Uniform1(context.MaterialLocation,0);
+                DrawVisible(_buildingVao,_buildingRanges,view,proj);
+                GL.Uniform1(context.MaterialLocation,4);
+                DrawVisible(_glassVao,_glassRanges,view,proj);
+                if (lighting.WindowGlow > 0.01f)
+                {
+                    GL.Uniform1(context.MaterialLocation,7);
+                    DrawVisible(_windowVao,_windowRanges,view,proj);
+                }
+                GL.Uniform1(context.MaterialLocation,0);
+                DrawVisible(_sceneryVao,_sceneryRanges,view,proj);
+                if (_districtCount > 0) { GL.BindVertexArray(_districtVao); GL.DrawArrays(PrimitiveType.Triangles,0,_districtCount); }
+                if (tramVisible)
+                {
+                    GL.UniformMatrix4(context.ModelLocation,false,ref tramModel);
+                    GL.BindVertexArray(_tramVao); GL.DrawArrays(PrimitiveType.Triangles,0,_tramCount);
+                    GL.UniformMatrix4(context.ModelLocation,false,ref id);
+                }
+            }
+            GL.Uniform1(context.MaterialLocation,0);
+            if (_npcCount > 0) { GL.BindVertexArray(_npcVao); GL.DrawArrays(PrimitiveType.Triangles,0,_npcCount); }
         }
-
-        GL.BindVertexArray(_roadVao); GL.DrawArrays(PrimitiveType.Triangles, 0, _roadCount);
-        GL.BindVertexArray(_sidewalkVao); GL.DrawArrays(PrimitiveType.Triangles, 0, _sidewalkCount);
-        GL.BindVertexArray(_buildingVao); GL.DrawArrays(PrimitiveType.Triangles, 0, _buildingCount);
-        if (_windowCount > 0) { GL.BindVertexArray(_windowVao); GL.DrawArrays(PrimitiveType.Triangles, 0, _windowCount); }
-        bool cullFaceEnabled = GL.IsEnabled(EnableCap.CullFace);
-        GL.Disable(EnableCap.CullFace);
-        if (_spriteRenderer == null) _spriteRenderer = new SpriteRenderer();
-        if (_treeTexture != null)
+        finally
         {
-            _treeTexture.Bind(0);
-            _spriteRenderer.Begin();
-            float h = 2.6f, w = 1.4f;
-            foreach (var (pos, scale) in _treePositions)
-            {
-                float sh = h * scale, sw = w * scale;
-                Vector3 c = pos with { Y = pos.Y + sh * 0.5f };
-                _spriteRenderer.Add(c, sw, sh, Vector3.One, 1f);
-            }
-            _spriteRenderer.Flush(ref view, ref proj);
+            GL.Uniform1(context.WorldPassLocation,0);
+            GL.Uniform1(context.ShadowStrengthLocation,0f);
         }
-        if (cullFaceEnabled) GL.Enable(EnableCap.CullFace);
-        GL.UseProgram(context.Shader);
-        GL.UniformMatrix4(context.ViewLocation, false, ref view);
-        GL.UniformMatrix4(context.ProjectionLocation, false, ref proj);
-        GL.UniformMatrix4(context.ModelLocation, false, ref id);
-        GL.Uniform3(context.ColorLocation, -1f, -1f, -1f);
-        GL.BindVertexArray(_npcVao); GL.DrawArrays(PrimitiveType.Triangles, 0, _npcCount);
+    }
+
+    private static void DrawVisible(int vao, List<SceneRange> ranges, in Matrix4 view, in Matrix4 projection, int materialLocation = -1)
+    {
+        GL.BindVertexArray(vao);
+        foreach (var range in ranges)
+        {
+            if (range.Count == 0 || !range.Visible(view,projection)) continue;
+            if (materialLocation >= 0) GL.Uniform1(materialLocation,range.Material);
+            GL.DrawArrays(PrimitiveType.Triangles,range.First,range.Count);
+        }
+    }
+
+    private static void DrawShadow(int vao, List<SceneRange> ranges, Vector3 focus)
+    {
+        GL.BindVertexArray(vao);
+        foreach (var range in ranges)
+            if (range.Count > 0 && range.Near(focus,75))
+                GL.DrawArrays(PrimitiveType.Triangles,range.First,range.Count);
     }
 
     public void RenderHighlight(int shader, int modelL, Vector3 pos)
@@ -1437,33 +1264,12 @@ public class CityRenderer : IDisposable
     private static void Quad(ref List<float> v,
         float x1, float y1, float z1, float x2, float y2, float z2,
         float x3, float y3, float z3, float x4, float y4, float z4,
-        float r, float g, float b)
-    {
-        // Нормаль из первых трёх точек (левая система координат)
-        Vector3 a = new(x2 - x1, y2 - y1, z2 - z1);
-        Vector3 bV = new(x3 - x1, y3 - y1, z3 - z1);
-        Vector3 n = Vector3.Cross(a, bV);
-        n.Normalize();
-        float nx = n.X, ny = n.Y, nz = n.Z;
-        AddVertex(v, x1, y1, z1, r, g, b, nx, ny, nz);
-        AddVertex(v, x2, y2, z2, r, g, b, nx, ny, nz);
-        AddVertex(v, x3, y3, z3, r, g, b, nx, ny, nz);
-        AddVertex(v, x1, y1, z1, r, g, b, nx, ny, nz);
-        AddVertex(v, x3, y3, z3, r, g, b, nx, ny, nz);
-        AddVertex(v, x4, y4, z4, r, g, b, nx, ny, nz);
-    }
+        float r, float g, float b) =>
+        SceneGeometry.Quad(v, new(x1,y1,z1), new(x2,y2,z2), new(x3,y3,z3), new(x4,y4,z4), new(r,g,b));
 
     private static void Box(ref List<float> v, float x, float y, float z, float w, float h, float d,
-        float r, float g, float b)
-    {
-        float x2 = x + w, y2 = y + h, z2 = z + d;
-        Quad(ref v, x, y, z2, x2, y, z2, x2, y2, z2, x, y2, z2, r * 0.7f, g * 0.7f, b * 0.7f);
-        Quad(ref v, x2, y, z, x, y, z, x, y2, z, x2, y2, z, r * 0.5f, g * 0.5f, b * 0.5f);
-        Quad(ref v, x2, y, z, x2, y, z2, x2, y2, z2, x2, y2, z, r * 0.8f, g * 0.8f, b * 0.8f);
-        Quad(ref v, x, y, z, x, y, z2, x, y2, z2, x, y2, z, r * 0.6f, g * 0.6f, b * 0.6f);
-        Quad(ref v, x, y2, z, x2, y2, z, x2, y2, z2, x, y2, z2, r * 1.1f, g * 1.1f, b * 1.1f);
-        Quad(ref v, x, y, z, x, y, z2, x2, y, z2, x2, y, z, r * 0.9f, g * 0.9f, b * 0.9f);
-    }
+        float r, float g, float b) =>
+        SceneGeometry.Box(v, new(x,y,z), new(w,h,d), new(r,g,b));
 
     private static unsafe void Upload(ref int vao, ref int vbo, ref int count, ref int gpuBytes, List<float> verts)
     {
@@ -1473,25 +1279,33 @@ public class CityRenderer : IDisposable
         if (vbo == 0) vbo = GL.GenBuffer();
         GL.BindVertexArray(vao);
         GL.BindBuffer(BufferTarget.ArrayBuffer, vbo);
-        Span<float> span = CollectionsMarshal.AsSpan(verts);
-        gpuBytes = verts.Count * sizeof(float);
-        fixed (float* p = span)
-            GL.BufferData(BufferTarget.ArrayBuffer, gpuBytes, (nint)p, BufferUsageHint.StaticDraw);
-        ConfigureVertexAttributes();
+        ReadOnlySpan<float> source = CollectionsMarshal.AsSpan(verts);
+        gpuBytes = count * PackedSceneVertex.Stride;
+        GL.BufferData(BufferTarget.ArrayBuffer, gpuBytes, IntPtr.Zero, BufferUsageHint.StaticDraw);
+        // Keep the temporary packing buffer bounded even for a city-sized mesh.
+        const int batchSize = 16384;
+        var packed = ArrayPool<PackedSceneVertex>.Shared.Rent(batchSize);
+        try
+        {
+            for (int first = 0; first < count; first += batchSize)
+            {
+                int length = Math.Min(batchSize, count - first);
+                for (int i = 0; i < length; i++)
+                    packed[i] = new PackedSceneVertex(source.Slice((first + i) * FloatsPerVertex, FloatsPerVertex));
+                fixed (PackedSceneVertex* p = packed)
+                    GL.BufferSubData(BufferTarget.ArrayBuffer, (IntPtr)(first * PackedSceneVertex.Stride),
+                        length * PackedSceneVertex.Stride, (nint)p);
+            }
+        }
+        finally { ArrayPool<PackedSceneVertex>.Shared.Return(packed); }
+        GL.VertexAttribPointer(0, 3, VertexAttribPointerType.Float, false, PackedSceneVertex.Stride, 0);
+        GL.EnableVertexAttribArray(0);
+        GL.VertexAttribPointer(1, 3, VertexAttribPointerType.HalfFloat, false, PackedSceneVertex.Stride, 12);
+        GL.EnableVertexAttribArray(1);
+        GL.VertexAttribPointer(2, 3, VertexAttribPointerType.Short, true, PackedSceneVertex.Stride, 20);
+        GL.EnableVertexAttribArray(2);
     }
 
-    private static void AddVertex(List<float> v, float x, float y, float z, float r, float g, float b, float nx, float ny, float nz)
-    {
-        v.Add(x);
-        v.Add(y);
-        v.Add(z);
-        v.Add(r);
-        v.Add(g);
-        v.Add(b);
-        v.Add(nx);
-        v.Add(ny);
-        v.Add(nz);
-    }
 
     private static void ConfigureVertexAttributes()
     {
@@ -1505,12 +1319,17 @@ public class CityRenderer : IDisposable
 
     public void Dispose()
     {
+        _materials.Dispose();
+        _shadows.Dispose();
+        DeleteMesh(ref _facadeVao, ref _facadeVbo, ref _facadeCount, ref _facadeGpuBytes);
+        DeleteMesh(ref _glassVao, ref _glassVbo, ref _glassCount, ref _glassGpuBytes);
         DeleteMesh(ref _roadVao, ref _roadVbo, ref _roadCount, ref _roadGpuBytes);
         DeleteMesh(ref _sidewalkVao, ref _sidewalkVbo, ref _sidewalkCount, ref _sidewalkGpuBytes);
         DeleteMesh(ref _buildingVao, ref _buildingVbo, ref _buildingCount, ref _buildingGpuBytes);
         DeleteMesh(ref _windowVao, ref _windowVbo, ref _windowCount, ref _windowGpuBytes);
-        _spriteRenderer?.Dispose();
-        _treeTexture?.Dispose();
+        DeleteMesh(ref _sceneryVao, ref _sceneryVbo, ref _sceneryCount, ref _sceneryGpuBytes);
+        DeleteMesh(ref _districtVao, ref _districtVbo, ref _districtCount, ref _districtGpuBytes);
+        DeleteMesh(ref _tramVao, ref _tramVbo, ref _tramCount, ref _tramGpuBytes);
         DeleteMesh(ref _npcVao, ref _npcVbo, ref _npcCount);
         _npcGpuCapacityBytes = 0;
         DeleteMesh(ref _interiorVao, ref _interiorVbo, ref _interiorCount, ref _interiorGpuBytes);

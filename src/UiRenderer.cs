@@ -31,6 +31,26 @@ public sealed class UiRenderer : IDisposable
         return Math.Max(0, text.Length * 6f - 1f) * pixelSize * _textPixelWidthScale;
     }
 
+    public List<string> WrapText(string text, float pixelSize, float width)
+    {
+        int capacity = Math.Max(1, (int)((width / (pixelSize * _textPixelWidthScale) + 1f) / 6f));
+        var lines = new List<string>();
+        int start = 0;
+        while (start < text.Length)
+        {
+            int count = Math.Min(capacity, text.Length - start);
+            if (start + count < text.Length)
+            {
+                int space = text.LastIndexOf(' ', start + count - 1, count);
+                if (space > start) count = space - start;
+            }
+            lines.Add(text.Substring(start, count));
+            start += count;
+            while (start < text.Length && text[start] == ' ') start++;
+        }
+        return lines;
+    }
+
     public void Text(string text, float x, float y, float pixelSize, Vector3 color)
     {
         float cursor = x;

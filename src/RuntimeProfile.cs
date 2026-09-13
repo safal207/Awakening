@@ -72,7 +72,8 @@ public readonly record struct RuntimeProfileSnapshot(
     int Gen1Collections,
     int Gen2Collections,
     int NpcCount,
-    float TimeOfDay);
+    float TimeOfDay,
+    long EstimatedGpuTextureBytes = 0);
 
 public sealed class RuntimeProfiler
 {
@@ -93,7 +94,8 @@ public sealed class RuntimeProfiler
     }
 
     public bool IsComplete => _completed;
-    public bool ShouldComplete => !_completed && _elapsedSeconds >= _options.DurationSeconds;
+    public bool TimedOut => !_completed && _clock.Elapsed.TotalSeconds >= _options.DurationSeconds + 15;
+    public bool ShouldComplete => !_completed && (_elapsedSeconds >= _options.DurationSeconds || TimedOut);
 
     public void Start(RuntimeProfileGlInfo glInfo)
     {
@@ -167,11 +169,13 @@ public sealed class RuntimeProfiler
             Gen2Collections: finalSnapshot.Gen2Collections - (_samples.Count > 0 ? _samples[0].Gen2Collections : finalSnapshot.Gen2Collections),
             EstimatedGpuBufferBytesEnd: finalSnapshot.EstimatedGpuBufferBytes,
             EstimatedGpuBufferBytesPeak: _samples.Count > 0 ? _samples.Max(sample => sample.EstimatedGpuBufferBytes) : finalSnapshot.EstimatedGpuBufferBytes,
+            EstimatedGpuTextureBytesEnd: finalSnapshot.EstimatedGpuTextureBytes,
+            EstimatedGpuTextureBytesPeak: _samples.Count > 0 ? _samples.Max(sample => sample.EstimatedGpuTextureBytes) : finalSnapshot.EstimatedGpuTextureBytes,
             NpcCount: finalSnapshot.NpcCount,
             GlVendor: _glInfo.Vendor,
             GlRenderer: _glInfo.Renderer,
             GlVersion: _glInfo.Version,
-            Notes: "GPU memory is app-owned GL buffer memory estimated from BufferData capacities; exact VRAM usage is driver-specific and not exposed portably.",
+            Notes: "GPU buffers and textures are separate app-owned allocation estimates, including mipmaps and the shadow map; exact VRAM usage remains driver-specific.",
             Samples: _samples);
     }
 
@@ -210,6 +214,8 @@ public sealed record RuntimeProfileReport(
     int Gen2Collections,
     long EstimatedGpuBufferBytesEnd,
     long EstimatedGpuBufferBytesPeak,
+    long EstimatedGpuTextureBytesEnd,
+    long EstimatedGpuTextureBytesPeak,
     int NpcCount,
     string GlVendor,
     string GlRenderer,

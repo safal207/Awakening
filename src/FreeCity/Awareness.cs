@@ -39,18 +39,6 @@ public class AwarenessSystem
     {
         if (player.State == NpcState.Aware) return;
 
-        if (Stage == 0 && timeOfDay > 12)
-            Add(dt * 0.5f);
-
-        if (Stage >= 1)
-            Add(dt * 0.2f);
-
-        if (Stage >= 2 && Level > 60)
-            Add(dt * 0.4f);
-
-        if (Stage == 3 && Level >= 80)
-            Add(dt * 1.0f);
-
         if (Level >= 100)
         {
             player.State = NpcState.Aware;

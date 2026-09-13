@@ -1,83 +1,126 @@
-# Awakening — Voxel PixelArt Engine
+# Пробуждение
 
-A voxel world engine written in C# (.NET) with OpenGL 3.3 Core rendering.
-Each block face is an 8×8 pixel grid (64 colored pixels per face) — no textures, pure geometry with color.
+**Город забывает. Люди могут помнить.**
 
-> Inspired by Minecraft-style voxel worlds with a unique pixel-art aesthetic.
+Игра от третьего лица о работнике городской службы, который замечает повторение
+одного дня и учится менять чужие жизни собственными решениями.
 
-## Features
+Статус: **технический alpha-прототип** на C# / OpenTK. В интеграционной ветке
+реализована первая трёхутренняя цепочка: встреча или ремонт, свидетельство Ники,
+проверка страницы после Сверки. Это ещё не полный район из концепции.
+Онлайн-сервера нет. Объединённые изменения проходят проверку в [PR #27](https://github.com/safal207/Awakening/pull/27).
 
-- **Voxel world** with procedural generation via Perlin noise
-- **PixelArt faces** — each block face is an 8×8 RGB pixel grid
-- **Chunk system** — 16×64×16 blocks per chunk, dirty-flag mesh rebuild
-- **Block interaction** — place (RMB) and destroy (LMB) blocks, raycast up to 8 blocks
-- **Directional lighting** + ambient, day/night cycle
-- **FreeCity module** — city generator with NPC characters, hero progress, save system
-- **Runtime profiler** — built-in performance profiling (`RuntimeProfile.cs`)
-- **Functional tests** — `FunctionalTests.cs` inside `src/FreeCity/`
+![Город и герой в текущей сборке](docs/images/manhattan-day.png)
 
-## Block Types
+## Направление
 
-`Air`, `Grass`, `Dirt`, `Stone`, `Wood`, `Leaves`, `Sand`, `Planks`, `Bricks`, `Water`, `Glass`
+После ночной Сверки город возвращается к расписанию. Герой может сохранить
+событие, если другой человек добровольно станет его свидетелем. Так появляются
+якоря памяти, отношения и последствия, переживающие утро.
 
-## Controls
+- [Оригинальная концепция и первый район](docs/CONCEPT.md)
+- [Roadmap с этапами и критериями готовности](ROADMAP.md)
+- [Вдохновение: Free Guy, темы и отличия](docs/INSPIRATION.md)
+- [Художественное направление](docs/ART_DIRECTION.md)
+- [Отдельная основа Unreal Engine: статус и запуск](unreal/README.md)
+- [Широкие улицы, материалы и тени: нью-йоркская итерация](docs/MANHATTAN_REFRESH.md)
+- [Архитектура и технические ограничения](SPECIFICATION.md)
+- [Результаты проверок и воспроизведение](docs/VALIDATION.md)
 
-| Key | Action |
-|-----|--------|
-| `WASD` | Move |
-| `Space` | Up |
-| `Ctrl` | Down |
-| `Shift` | Sprint |
-| `Mouse` | Look around |
-| `LMB` | Destroy block |
-| `RMB` | Place block |
+## Что есть в прототипе
 
-## Project Structure
+- Процедурный город из 21x21 квартала и 50 жителей с распорядками.
+- Общий граф тротуаров и переходов для фоновых жителей, обход препятствий и встречных людей.
+- Общая человеческая 3D-модель в городе и меню, лицо, одежда, анимация конечностей.
+- Отдалённые персонажи рисуются с меньшей детализацией; герой остаётся подробным.
+- Кирпич и камень, пожарные лестницы, баки на крышах, фонари и припаркованные машины.
+- Проезжая часть 12 м, тротуары по 3 м, переходы, парковочная разметка и объёмные деревья.
+- Освещение дня/ночи, солнечные тени, светящиеся окна, дымка и сглаживание MSAA 4x.
+- Отсечение невидимого окружения и компактные статические GPU-буферы.
+- Камера от третьего лица, осмотр героя, меню паузы и настройки.
+- Диалоги, качества, находки и маркеры интереса.
+- Первый эпизод Лиды и Марка: ремонт или задержка рейса, встреча и память после утра.
+- Ника у журнала со второго утра, отдельные разрешения на запись и последствия третьего утра.
+- Возможность оставить память личной; отказ не отменяет состоявшуюся встречу.
+- Сохранение качеств, событий, состояний свидетелей, позиции героя и интерьера.
+- Резервная копия, восстановление повреждённого прогресса, защита выхода при ошибке записи.
+- Пассивная прибавка качеств при загрузке для осознания от 70%, до 12 часов.
+- Автоматические проверки логики, снимки настоящего OpenGL-окна и профилировщик.
 
-```
-src/
-├── Game.cs              — main loop, render
-├── Camera.cs            — camera
-├── Input.cs             — input handler
-├── UiRenderer.cs        — UI rendering
-├── RuntimeProfile.cs    — performance profiling
-├── Player/              — player logic
-└── FreeCity/
-    ├── CityGenerator.cs   — procedural city generation
-    ├── CityRenderer.cs    — city rendering
-    ├── NpcCharacter.cs    — NPC AI and behavior
-    ├── HeroProgress.cs    — hero progression system
-    ├── HeroStyle.cs       — hero appearance
-    ├── SaveSystem.cs      — save/load
-    ├── Awareness.cs       — awareness system
-    ├── InterestMarker.cs  — points of interest
-    └── FunctionalTests.cs — functional tests
-```
+## Что ещё не готово
 
-## Requirements
+Полная постановка района и проверка истории новыми игроками, плотных заторов в длинной сессии, выбранные занятия в отсутствие
+игрока и совместная игра. Текущая развязка при 100% осознания - временная механика;
+ожидание больше не повышает осознание. Пробуждение жителей переживает ночь,
+но не все данные их текущего распорядка сохраняются. Несколько одновременно
+запущенных игр пока могут конфликтовать при записи одного файла.
 
-- [.NET 8+](https://dotnet.microsoft.com/download)
-- OpenGL 3.3 compatible GPU
-- Windows (build scripts: `build.bat`, `build_and_run.ps1`)
+![Меню и общий 3D-портрет героя](docs/images/menu.png)
 
-## Build & Run
+## Управление
 
-### Windows (PowerShell)
+| Клавиша | Действие |
+|---|---|
+| WASD | Движение |
+| Shift | Бег |
+| Мышь | Поворот камеры |
+| Колесо или J/K | Приблизить/отдалить камеру |
+| C | Вернуть камеру за спину героя |
+| E | Контекстное взаимодействие: разговор, вход, выход |
+| ЛКМ | Текущая реакция героя; это пока не замена взаимодействию E |
+| Стрелки, Enter | Выбор реплики или пункта меню |
+| Esc | Закрыть диалог / открыть меню паузы |
+
+В меню можно выбирать пункты мышью. Зажмите ЛКМ на портрете, чтобы повернуть
+героя. Влево/вправо поворачивают портрет, кроме настроек, где меняют значение.
+Поддержка геймпада есть в коде; физический контроллер в этой проверке не использовался.
+
+Личные фото и файлы моделей для работы над героем грузим через
+`.\scripts\Import-HeroReferenceBundle.ps1 -Source <папка_или_файл>`.
+Скрипт складывает сессию в `artifacts\hero-identity\reference-bundle` и ведёт
+`manifest.json`, сам репозиторий не меняет.
+
+## Сборка и запуск
+
+Windows 10+, .NET 8 SDK, видеокарта с OpenGL 3.3 Core.
+
 ```powershell
-.\build_and_run.ps1
+dotnet restore Probuzhdenie.csproj
+dotnet run --project Probuzhdenie.csproj -c Release
 ```
 
-### Windows (CMD)
-```bat
-build.bat
+Или запустите `build_and_run.ps1`. Пользовательское сохранение лежит в
+`%APPDATA%/Probuzhdenie/save.json`, настройки в
+`%LOCALAPPDATA%/Probuzhdenie/settings.json`. Они не публикуются в репозитории.
+Рядом с прогрессом находится одна резервная версия `save.json.bak`. При её
+восстановлении последние изменения после этого снимка могут потеряться;
+повреждённый оригинал остаётся в отдельном файле. [Правила восстановления](docs/SAVE_RECOVERY_2026-09-13.md).
+
+## Проверка
+
+```powershell
+dotnet run --project Probuzhdenie.csproj -c Release -- --self-test
+dotnet run --project Probuzhdenie.csproj -c Release -- --functional-test
+dotnet run --project tests/GraphicsSmoke/GraphicsSmoke.csproj -c Release
+dotnet run --project tests/GraphicsSmoke/GraphicsSmoke.csproj -c Release -- --playthrough
+dotnet run --project Probuzhdenie.csproj -c Release -- --runtime-profile --profile-seconds=120
 ```
 
-### Manual
-```bash
-dotnet build Probuzhdenie.csproj
-dotnet run
-```
+Графические тесты и профиль открывают окно. Запускайте их по очереди из корня
+репозитория. Профиль использует отдельный тестовый мир и не читает/не перезаписывает
+игровое сохранение. Оценки собственных GPU-буферов и текстур в JSON не равны полной
+видеопамяти драйвера. После расширения улиц расстояния в мире изменились; поддерживаемый
+прогресс загружается, точные позиции старый формат не сохранял. Версия 5 хранит
+позицию и интерьер; небезопасная точка корректируется при загрузке. Проверки
+прохождения включают 8 маршрутов (ремонт и встреча теперь до третьего утра), графические проверки - 33 сцены. В функциональные
+тесты включены [400 путей и симуляция распорядков жителей](docs/STREET_NAVIGATION_2026-09-13.md).
+Продолжение истории и границы проверки: [Ника и третье утро](docs/NIKA_THIRD_MORNING_2026-09-13.md).
 
-## License
+## Лицензия
 
-MIT — see [LICENSE](LICENSE) for details.
+Исходный код: [MIT](LICENSE). Проект не связан с правообладателями Free Guy.
+Поиск пути использует RoyT.AStar 3.0.2: [лицензия и автор](licenses/RoyT.AStar.txt).
+Модель героя v3 и фотографии: [пакет референсов](assets/hero-reference/README.md).
+Личные фотографии не входят в MIT-лицензию исходного кода.
+Ресурсы фильма не включены; снимки сняты из нашей игры. Кирпичный материал создан
+для проекта: [происхождение ресурса](assets/materials/README.md).

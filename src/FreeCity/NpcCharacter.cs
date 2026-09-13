@@ -22,7 +22,12 @@ public readonly record struct DialogueChoice(
     float CuriosityGain,
     float EmpathyGain,
     float AgencyGain,
-    float CourageGain);
+    float CourageGain,
+    string ActionId = "",
+    string RewardId = "")
+{
+    public bool HasQualityGain => MemoryGain > 0 || CuriosityGain > 0 || EmpathyGain > 0 || AgencyGain > 0 || CourageGain > 0;
+}
 
 public class NpcCharacter
 {
@@ -72,6 +77,7 @@ public class NpcCharacter
     // Анимация
     public float AnimPhase;
     public float AnimBlend;
+    public float Greeting;
 
     // Расписание
     public Vector3 HomePos;
@@ -89,6 +95,8 @@ public class NpcCharacter
 
     // Маршрут
     private Vector3 _target;
+    private readonly NpcRoute _route = new();
+    private bool _wandering;
     private float _idleTimer;
     private float _walkSpeed = 2.5f;
     private float _currentSpeed;
@@ -99,10 +107,10 @@ public class NpcCharacter
     private readonly float _shoppingStart;
     private readonly float _shoppingEnd;
 
-    public NpcCharacter(Vector3 home, Vector3 work, int seed)
+    public NpcCharacter(Vector3 home, Vector3 work, int seed, int? id = null)
     {
         _rng = new Random(seed);
-        Id = _nextId++;
+        Id = id ?? _nextId++;
         Name = $"Горожанин #{Id + 1}";
         HomePos = home;
         WorkPos = work;
@@ -127,6 +135,7 @@ public class NpcCharacter
             0.025f + (float)_rng.NextDouble() * 0.05f
         );
         if (HeroStyle.IsHero(this)) HeroStyle.ApplyTo(this);
+        FirstDistrictStory.ApplyIdentity(this);
 
         _shopsAfterWork = _rng.NextDouble() < 0.45;
         _shoppingStart = WorkEnd + 0.2f + (float)_rng.NextDouble() * 1.2f;
@@ -135,53 +144,74 @@ public class NpcCharacter
 
     public void Update(float timeOfDay, float dt)
     {
-        if (State == NpcState.Aware) return;
+        Vector3 before = Position;
+        UpdateSchedule(timeOfDay, dt, null, null);
+        UpdateMotion(before, dt);
+    }
+
+    internal void UpdateSchedule(float timeOfDay, float dt, StreetNavigation? navigation, Box2? obstacle)
+    {
+        if (State == NpcState.Aware) { Stop(NpcState.Aware); return; }
 
         if (timeOfDay < WakeHour || timeOfDay >= SleepHour)
-            Goto(HomePos, dt, NpcState.Sleeping);
+        {
+            _wandering = false;
+            Goto(HomePos, dt, NpcState.Sleeping, navigation, obstacle);
+        }
         else if (timeOfDay < WorkStart)
-            Wander(dt, NpcState.Relaxing);
+            Wander(dt, NpcState.Relaxing, navigation, obstacle);
         else if (timeOfDay >= WorkStart && timeOfDay < WorkEnd)
         {
-            if (Vector3.DistanceSquared(Position, WorkPos) < 4f)
-                State = NpcState.Working;
-            else
-                Goto(WorkPos, dt, NpcState.Working);
+            _wandering = false;
+            Goto(WorkPos, dt, NpcState.Working, navigation, obstacle);
         }
         else if (_shopsAfterWork && timeOfDay >= _shoppingStart && timeOfDay < _shoppingEnd)
-            Wander(dt, NpcState.Shopping);
+            Wander(dt, NpcState.Shopping, navigation, obstacle);
         else
-            Wander(dt, NpcState.Relaxing);
+            Wander(dt, NpcState.Relaxing, navigation, obstacle);
+    }
 
+    internal void UpdateMotion(Vector3 before, float dt)
+    {
+        if (dt <= 0) return;
+        Velocity = (Position - before) / dt;
+        float speed = Velocity.Xz.Length;
+        if (speed > 0.1f) TargetRotation = MathF.Atan2(Velocity.X, Velocity.Z);
         float rotDiff = TargetRotation - Rotation;
         if (rotDiff > MathF.PI) rotDiff -= MathHelper.TwoPi;
         else if (rotDiff < -MathF.PI) rotDiff += MathHelper.TwoPi;
         Rotation += rotDiff * Math.Clamp(RotSpeed * dt, 0f, 1f);
 
-        float speed = _currentSpeed;
         if (speed > 0.1f)
             AnimPhase += speed * 3.5f * dt;
         AnimBlend = Math.Clamp(speed / _walkSpeed, 0f, 1f);
     }
 
-    private void Goto(Vector3 target, float dt, NpcState state)
+    private void Stop(NpcState state)
     {
+        _currentSpeed = 0;
+        Velocity = Vector3.Zero;
+        State = state;
+    }
+
+    private bool Goto(Vector3 target, float dt, NpcState state, StreetNavigation? navigation, Box2? obstacle)
+    {
+        if (Vector2.DistanceSquared(target.Xz, Position.Xz) < 0.0225f &&
+            (navigation == null || navigation.IsSegmentClear(Position, target, obstacle)))
+        {
+            Stop(state);
+            return true;
+        }
+        if (navigation != null && !_route.Waypoint(navigation, Position, target, dt, obstacle, out target))
+        {
+            Stop(NpcState.Walking);
+            return false;
+        }
         Vector3 dir = target - Position;
         dir.Y = 0;
-        float distSq = dir.LengthSquared;
-        if (distSq < 1f)
-        {
-            _currentSpeed = Math.Max(0f, _currentSpeed - Decel * dt);
-            if (_currentSpeed < 0.01f)
-            {
-                _currentSpeed = 0f;
-                Velocity = Vector3.Zero;
-                State = state;
-            }
-            return;
-        }
-        dir.Normalize();
-        TargetRotation = MathF.Atan2(dir.X, dir.Z);
+        float distance = dir.Length;
+        if (distance < 0.0001f) return false;
+        dir /= distance;
 
         float targetSpeed = _walkSpeed;
         _currentSpeed = _currentSpeed < targetSpeed
@@ -189,23 +219,30 @@ public class NpcCharacter
             : Math.Max(targetSpeed, _currentSpeed - Decel * dt);
 
         Velocity = dir * _currentSpeed;
-        Position += Velocity * dt;
+        Position += dir * Math.Min(distance, _currentSpeed * dt);
         State = NpcState.Walking;
+        return false;
     }
 
-    private void Wander(float dt, NpcState idleState)
+    private void Wander(float dt, NpcState idleState, StreetNavigation? navigation, Box2? obstacle)
     {
         _idleTimer -= dt;
-        if (_idleTimer <= 0)
+        if (_idleTimer > 0) { Stop(idleState); return; }
+        if (!_wandering)
         {
-            _idleTimer = 3f + (float)_rng.NextDouble() * 6f;
             _target = Position + new Vector3(
                 (float)(_rng.NextDouble() - 0.5) * 30f,
                 0,
                 (float)(_rng.NextDouble() - 0.5) * 30f
             );
+            if (navigation != null) _target = navigation.ClosestPoint(_target);
+            _wandering = true;
         }
-        Goto(_target, dt, idleState);
+        if (Goto(_target, dt, idleState, navigation, obstacle))
+        {
+            _wandering = false;
+            _idleTimer = 3f + (float)_rng.NextDouble() * 6f;
+        }
     }
 
     public string GetDialogue(float worldAwareness, HeroProgress progress)
@@ -217,6 +254,9 @@ public class NpcCharacter
 
     public (string npcLine, DialogueChoice[] choices) GetDialogueState(float worldAwareness, HeroProgress progress)
     {
+        if (FirstDistrictStory.TryGetDialogue(this, progress, out string storyLine, out DialogueChoice[] storyChoices))
+            return (storyLine, storyChoices);
+
         bool aware = State == NpcState.Aware || worldAwareness >= 85f;
         bool fractured = worldAwareness >= 35f || progress.Memory >= 25f || progress.Curiosity >= 25f;
         float friendliness = Friendliness;
@@ -307,27 +347,35 @@ public class NpcCharacter
         };
     }
 
-    public void ApplyChoice(DialogueChoice choice, HeroProgress progress)
+    public bool ApplyChoice(DialogueChoice choice, HeroProgress progress)
     {
+        if (!FirstDistrictStory.CanApplyChoice(this, choice, progress)) return false;
+        if (!progress.TryClaimDialogueReward(Id, choice)) return false;
         Friendliness = Math.Clamp(Friendliness + choice.FriendlinessDelta, 0f, 100f);
         Trust = Math.Clamp(Trust + choice.TrustDelta, 0f, 100f);
         TimesTalked++;
         progress.AddQualities(choice.MemoryGain, choice.CuriosityGain, choice.EmpathyGain, choice.AgencyGain, choice.CourageGain);
-        if (choice.MemoryGain > 0 || choice.CuriosityGain > 0 || choice.EmpathyGain > 0 || choice.AgencyGain > 0 || choice.CourageGain > 0)
+        if (choice.HasQualityGain)
             Awareness = Math.Min(100f, Awareness + 1f);
+        FirstDistrictStory.ApplyChoice(this, choice, progress);
+        return true;
     }
 
     public void Reset()
     {
-        State = NpcState.Walking;
-        Awareness = 0f;
+        bool awakened = State == NpcState.Aware || Awareness >= 100f;
+        State = awakened ? NpcState.Aware : NpcState.Walking;
+        Awareness = awakened ? 100f : 0f;
         Position = HomePos;
         Velocity = Vector3.Zero;
         _currentSpeed = 0f;
         _idleTimer = 0f;
+        _wandering = false;
+        _route.Reset();
         _target = HomePos;
         AnimPhase = (float)(_rng.NextDouble() * MathHelper.TwoPi);
         AnimBlend = 0f;
+        Greeting = 0f;
     }
 
     private string Pick(params string[] lines) => lines[_rng.Next(lines.Length)];
