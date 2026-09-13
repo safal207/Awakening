@@ -19,6 +19,9 @@ public class HeroProgress
 
     public const int DailyTalkGoal = 2;
 
+    public MemoryLedger Ledger { get; internal set; } = new();
+    public bool SaveWritesBlocked { get; internal set; }
+
     public int Day { get; private set; } = 1;
     public float Memory { get; private set; } = 0f; // 0-100
     public float Curiosity { get; private set; } = 0f; // 0-100
@@ -42,6 +45,7 @@ public class HeroProgress
 
     public void NewDay()
     {
+        Ledger.ApplySverka();
         Day++;
         // Slight decay of qualities overnight to encourage active play
         Memory = Math.Max(0f, Memory - 0.5f);
