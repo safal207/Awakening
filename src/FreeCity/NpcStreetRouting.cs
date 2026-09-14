@@ -7,9 +7,9 @@ namespace Probuzhdenie.FreeCity;
 /// <summary>
 /// Deterministic low-cost routing for the regular street grid of Mera.
 /// It is deliberately not a general navmesh: direct conservative line-of-sight
-/// stays direct; otherwise a point connects to a sidewalk corner, then to a road
-/// intersection, travels through connected street intersections, and returns to
-/// the destination through the corresponding corner.
+/// stays direct; otherwise a point connects to a safe street intersection,
+/// travels through connected street-center links, and returns to the target via
+/// a conservative lane connector that avoids generic facade/car envelopes.
 /// </summary>
 public static class NpcStreetRouting
 {
@@ -48,8 +48,7 @@ public static class NpcStreetRouting
         Attachment start = Attach(from);
         Attachment end = Attach(destination);
 
-        AddUnique(result, start.Corner);
-        AddUnique(result, start.Intersection);
+        AppendStartApproach(from, start, result);
 
         if (HorizontalDistanceSquared(start.Intersection, end.Intersection) > 0.01f)
         {
@@ -67,8 +66,7 @@ public static class NpcStreetRouting
             AddUnique(result, end.Intersection);
         }
 
-        AddUnique(result, end.Corner);
-        AddUnique(result, destination);
+        AppendEndApproach(end, destination, result);
 
         if (result.Count == 0)
             result.Add(destination);
@@ -91,13 +89,84 @@ public static class NpcStreetRouting
         for (int i = 0; i < route.Count; i++)
         {
             if (!Finite(route[i])) return false;
-            // The first/final destination can intentionally be inside a generic
-            // block only when the real seeded cell is an open Tree/Lamp cell.
-            // All intermediate routing nodes must be universally safe.
-            if (i > 0 && i < route.Count - 1 && !GenericallyWalkable(route[i]))
+            // The final destination can intentionally be inside a generic block
+            // when the real seeded cell is an open Tree/Lamp cell. Intermediate
+            // routing nodes must be universally safe.
+            if (i < route.Count - 1 && !GenericallyWalkable(route[i]))
                 return false;
         }
         return true;
+    }
+
+    private static void AppendStartApproach(Vector3 from, Attachment attachment, List<Vector3> route)
+    {
+        Vector3 intersection = attachment.Intersection;
+        if (SegmentGenericallyClear(from, intersection))
+        {
+            AddUnique(route, intersection);
+            return;
+        }
+
+        Vector3 laneX = Ground(new Vector3(intersection.X, 0f, from.Z));
+        Vector3 laneZ = Ground(new Vector3(from.X, 0f, intersection.Z));
+        bool xClear = SegmentGenericallyClear(from, laneX) && SegmentGenericallyClear(laneX, intersection);
+        bool zClear = SegmentGenericallyClear(from, laneZ) && SegmentGenericallyClear(laneZ, intersection);
+
+        if (xClear || zClear)
+        {
+            Vector3 lane = ChooseShorterLane(from, intersection, laneX, xClear, laneZ, zClear);
+            AddUnique(route, lane);
+            AddUnique(route, intersection);
+            return;
+        }
+
+        // Fallback for a point that is generically blocked only because its real
+        // seeded cell is an open Tree/Lamp cell. The nearest sidewalk corner is
+        // deterministic and the real city collision layer remains the final guard.
+        AddUnique(route, attachment.Corner);
+        AddUnique(route, intersection);
+    }
+
+    private static void AppendEndApproach(Attachment attachment, Vector3 destination, List<Vector3> route)
+    {
+        Vector3 intersection = attachment.Intersection;
+        if (SegmentGenericallyClear(intersection, destination))
+        {
+            AddUnique(route, destination);
+            return;
+        }
+
+        Vector3 laneX = Ground(new Vector3(intersection.X, 0f, destination.Z));
+        Vector3 laneZ = Ground(new Vector3(destination.X, 0f, intersection.Z));
+        bool xClear = SegmentGenericallyClear(intersection, laneX) && SegmentGenericallyClear(laneX, destination);
+        bool zClear = SegmentGenericallyClear(intersection, laneZ) && SegmentGenericallyClear(laneZ, destination);
+
+        if (xClear || zClear)
+        {
+            Vector3 lane = ChooseShorterLane(intersection, destination, laneX, xClear, laneZ, zClear);
+            AddUnique(route, lane);
+            AddUnique(route, destination);
+            return;
+        }
+
+        AddUnique(route, attachment.Corner);
+        AddUnique(route, destination);
+    }
+
+    private static Vector3 ChooseShorterLane(
+        Vector3 from,
+        Vector3 to,
+        Vector3 laneA,
+        bool aClear,
+        Vector3 laneB,
+        bool bClear)
+    {
+        if (!aClear) return laneB;
+        if (!bClear) return laneA;
+
+        float aLength = HorizontalDistance(from, laneA) + HorizontalDistance(laneA, to);
+        float bLength = HorizontalDistance(from, laneB) + HorizontalDistance(laneB, to);
+        return aLength <= bLength ? laneA : laneB;
     }
 
     private static Attachment Attach(Vector3 point)
