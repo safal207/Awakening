@@ -18,6 +18,7 @@ public static class FirstMemorySpatial
 
     private sealed class State
     {
+        public bool Configured;
         public int ObservedDay = 1;
         public bool SignalObserved;
         public NpcCharacter? Lida;
@@ -38,6 +39,7 @@ public static class FirstMemorySpatial
 
         lida.AssignNarrativeRole(NarrativeRole.Lida);
         mark.AssignNarrativeRole(NarrativeRole.Mark);
+        state.Configured = true;
         state.Lida = lida;
         state.Mark = mark;
 
@@ -57,7 +59,7 @@ public static class FirstMemorySpatial
     {
         SyncDay(city.Progress);
         State state = GetState(city.Progress);
-        if (state.Lida == null || state.SignalObserved) return null;
+        if (!state.Configured || state.Lida == null || state.SignalObserved) return null;
         if (city.Progress.Ledger.TryGetEvent(FirstMemorySlice.EventId, out _)) return null;
         return Vector3.DistanceSquared(playerPosition, SignalPosition) <= range * range ? state.Lida : null;
     }
@@ -65,6 +67,9 @@ public static class FirstMemorySpatial
     public static bool IsSignalObserved(HeroProgress progress)
     {
         State state = GetState(progress);
+        // Unit-level memory tests do not construct a spatial city; keep the old
+        // direct narrative path valid there and gate only configured game worlds.
+        if (!state.Configured) return true;
         return state.ObservedDay == progress.Day && state.SignalObserved;
     }
 
@@ -85,7 +90,7 @@ public static class FirstMemorySpatial
     internal static bool TryBringMarkToMeeting(HeroProgress progress, NpcCharacter lida)
     {
         State state = GetState(progress);
-        if (state.Mark == null) return false;
+        if (!state.Configured || state.Mark == null) return false;
         PlaceStationary(state.Mark, MeetingPosition(lida));
         return true;
     }
@@ -93,7 +98,7 @@ public static class FirstMemorySpatial
     internal static void SyncDay(HeroProgress progress)
     {
         State state = GetState(progress);
-        if (state.ObservedDay == progress.Day) return;
+        if (!state.Configured || state.ObservedDay == progress.Day) return;
 
         state.ObservedDay = progress.Day;
         state.SignalObserved = false;
