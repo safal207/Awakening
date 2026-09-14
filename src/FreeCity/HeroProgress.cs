@@ -47,12 +47,9 @@ public class HeroProgress
     {
         Ledger.ApplySverka();
         Day++;
-        // Slight decay of qualities overnight to encourage active play
-        Memory = Math.Max(0f, Memory - 0.5f);
-        Curiosity = Math.Max(0f, Curiosity - 0.5f);
-        Empathy = Math.Max(0f, Empathy - 0.5f);
-        Agency = Math.Max(0f, Agency - 0.5f);
-        Courage = Math.Max(0f, Courage - 0.5f);
+
+        // Earned qualities are persistent memory of player decisions. A morning
+        // reset changes the daily schedule, not what the hero has already learned.
 
         // Reset daily objective
         DailyTalkProgress = 0;
