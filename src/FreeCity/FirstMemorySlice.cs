@@ -12,13 +12,14 @@ public enum NarrativeRole
 
 /// <summary>
 /// The smallest playable causal chain for the first memory:
-/// player choice -> concrete event -> voluntary witness -> memory anchor -> next-day consequence.
+/// player observation -> choice -> concrete event -> voluntary witness -> memory anchor -> next-day consequence.
 /// This deliberately stays narrow instead of becoming a quest framework.
 /// </summary>
 public static class FirstMemorySlice
 {
     public const string EventId = "first_memory_lida_mark_meeting";
     public const string LocationId = "tram_plaza";
+    public const string InspectSignalActionId = "inspect_broken_crossing_signal";
     public const string HelpLidaActionId = "leave_signal_repair_to_help_lida";
     public const string AcceptWitnessActionId = "mark_accepts_memory_witness";
     public const string TraceId = "dispatcher_note";
@@ -69,12 +70,27 @@ public static class FirstMemorySlice
 
             if (!ledger.TryGetEvent(EventId, out _))
             {
+                if (!FirstMemorySpatial.IsSignalObserved(progress))
+                {
+                    dialogue = (
+                        "Сигнал у перехода погас. Корпус цел, но индикаторы молчат. Сначала нужно понять, что именно сбилось.",
+                        new[]
+                        {
+                            new DialogueChoice(
+                                "Осмотреть контакты и журнал ошибки.",
+                                1, 2, 2, 3, 0, 1, 0,
+                                InspectSignalActionId),
+                            new DialogueChoice("Не сейчас.", 0, 0, 0, 0, 0, 0, 0),
+                        });
+                    return true;
+                }
+
                 dialogue = (
-                    "Сигнал у остановки снова погас. Если я задержу трамвай, у тебя будет минута разобраться — но маршрут собьётся.",
+                    "Питание есть, но контроллер снова вернулся в исходное состояние. Если я задержу трамвай, у тебя будет минута проверить, кого эта поломка разводит по разным маршрутам.",
                     new[]
                     {
                         new DialogueChoice(
-                            "Я помогу. Задержи трамвай на минуту.",
+                            "Я проверю. Задержи трамвай на минуту.",
                             4, 4, 1, 2, 2, 3, 2,
                             HelpLidaActionId),
                         new DialogueChoice("Сначала закончу обычный маршрут.", 0, -1, 0, 0, 0, 1, 0),
@@ -136,8 +152,13 @@ public static class FirstMemorySlice
     {
         MemoryLedger ledger = progress.Ledger;
 
+        if (choice.ActionId == InspectSignalActionId && npc.NarrativeRole == NarrativeRole.Lida)
+            return FirstMemorySpatial.MarkSignalObserved(progress);
+
         if (choice.ActionId == HelpLidaActionId && npc.NarrativeRole == NarrativeRole.Lida)
         {
+            if (!FirstMemorySpatial.IsSignalObserved(progress)) return false;
+
             var memoryEvent = new MemoryEvent(
                 Id: EventId,
                 Day: progress.Day,
@@ -148,7 +169,7 @@ public static class FirstMemorySlice
                 Description: "Лида задержала трамвай, и Марк успел выйти на площадь.");
 
             if (!ledger.TryRecordEvent(memoryEvent)) return false;
-            BringMarkToMeeting(npc);
+            BringMarkToMeeting(npc, progress);
             return true;
         }
 
@@ -164,8 +185,9 @@ public static class FirstMemorySlice
         return false;
     }
 
-    private static void BringMarkToMeeting(NpcCharacter lida)
+    private static void BringMarkToMeeting(NpcCharacter lida, HeroProgress progress)
     {
+        if (FirstMemorySpatial.TryBringMarkToMeeting(progress, lida)) return;
         if (_mark == null) return;
 
         Vector3 meeting = lida.Position + new Vector3(1.8f, 0f, 0.6f);
