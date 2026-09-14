@@ -107,6 +107,7 @@ public static partial class SaveSystem
 
             bool spatialClean = ValidateSpatialRow(data.Seed, data.PlayerSpatial, out string spatialReason);
             PlayerSpatialPersistence.SetPending(progress, data.PlayerSpatial);
+            NpcAwakeningPersistence.SetPending(progress, data.Npcs);
 
             double minutesAway = Math.Max(0d, (DateTime.UtcNow - data.LastSavedUtc.ToUniversalTime()).TotalMinutes);
             double offlineMinutes = 0d;
