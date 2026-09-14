@@ -29,6 +29,10 @@ internal static class CityStreetProps
                 SceneGeometry.Foliage(v,new(x+0.03f,2.68f+i*0.25f,z-0.31f),new(0.09f,0.09f,0.025f),
                     i==2 ? new(0.68f,0.10f,0.07f) : new(0.06f,0.12f,0.09f));
         }
+
+        if (b.X == 0 && b.Z == 0)
+            AppendFirstMemorySignal(v);
+
         if (b.Type is not (BuildingType.Tree or BuildingType.Lamp))
         {
             SceneGeometry.Cylinder(v,new(b.X-1.9f,0.12f,b.Z+7),new(b.X-1.9f,0.7f,b.Z+7),0.16f,new(0.61f,0.14f,0.10f));
@@ -38,6 +42,21 @@ internal static class CityStreetProps
                 ((b.X/CityGenerator.CellSize+b.Z/CityGenerator.CellSize)%3) switch {
                     0 => new(0.60f,0.16f,0.12f), 1 => new(0.29f,0.38f,0.40f), _ => new(0.68f,0.69f,0.66f) });
         }
+    }
+
+    private static void AppendFirstMemorySignal(List<float> v)
+    {
+        Vector3 p = FirstMemorySpatial.SignalPosition;
+        Vector3 pole = new(0.12f,0.15f,0.16f);
+        Vector3 housing = new(0.075f,0.085f,0.09f);
+        Vector3 deadRed = new(0.22f,0.055f,0.045f);
+        Vector3 deadGreen = new(0.035f,0.10f,0.065f);
+
+        SceneGeometry.Cylinder(v, p, p + new Vector3(0f, 2.35f, 0f), 0.075f, pole, 8);
+        SceneGeometry.Box(v, p + new Vector3(-0.23f, 1.65f, -0.16f), new Vector3(0.46f, 0.78f, 0.32f), housing);
+        SceneGeometry.Box(v, p + new Vector3(-0.14f, 2.19f, -0.175f), new Vector3(0.28f, 0.13f, 0.035f), deadRed);
+        SceneGeometry.Box(v, p + new Vector3(-0.14f, 1.84f, -0.175f), new Vector3(0.28f, 0.13f, 0.035f), deadGreen);
+        SceneGeometry.Box(v, p + new Vector3(-0.32f, 1.56f, -0.22f), new Vector3(0.64f, 0.08f, 0.44f), pole * 1.2f);
     }
 
     private static void Car(List<float> v, Vector3 p, Vector3 paint)
