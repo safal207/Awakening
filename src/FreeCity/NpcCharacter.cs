@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using OpenTK.Mathematics;
 
 namespace Probuzhdenie.FreeCity;
@@ -96,9 +97,15 @@ public class NpcCharacter
     private float _idleTimer;
     private float _walkSpeed = 2.5f;
     private float _currentSpeed;
+    private readonly List<Vector3> _route = new(8);
+    private int _routeIndex;
+    private Vector3 _routeDestination;
+    private bool _routeValid;
     private const float Accel = 8f;
     private const float Decel = 12f;
     private const float RotSpeed = 6f;
+    private const float RouteWaypointReach = 1.2f;
+    private const float RouteDestinationTolerance = 0.5f;
 
     public NpcCharacter(Vector3 home, Vector3 work, int seed)
     {
@@ -163,12 +170,14 @@ public class NpcCharacter
         Velocity = Vector3.Zero;
         _currentSpeed = 0f;
         AnimBlend = 0f;
+        ClearRoute();
     }
 
     public void RestorePersistentState(bool awakened, float awareness, NpcState state)
     {
         _isAwakened = awakened;
         Awareness = Math.Clamp(float.IsFinite(awareness) ? awareness : 0f, 0f, 100f);
+        ClearRoute();
         if (awakened)
         {
             Awareness = 100f;
@@ -201,7 +210,10 @@ public class NpcCharacter
         else if (timeOfDay >= WorkStart && timeOfDay < WorkEnd)
         {
             if (Vector3.DistanceSquared(Position, WorkPos) < 4f)
+            {
                 State = NpcState.Working;
+                ClearRoute();
+            }
             else
                 Goto(WorkPos, dt, NpcState.Working);
         }
@@ -221,19 +233,26 @@ public class NpcCharacter
         AnimBlend = Math.Clamp(speed / _walkSpeed, 0f, 1f);
     }
 
-    private void Goto(Vector3 target, float dt, NpcState state)
+    private void Goto(Vector3 destination, float dt, NpcState arrivalState)
     {
+        Vector3 target = RoutedTarget(destination);
         Vector3 dir = target - Position;
         dir.Y = 0;
         float distSq = dir.LengthSquared;
         if (distSq < 1f)
         {
+            if (_routeValid && _routeIndex < _route.Count - 1)
+            {
+                _routeIndex++;
+                return;
+            }
+
             _currentSpeed = Math.Max(0f, _currentSpeed - Decel * dt);
             if (_currentSpeed < 0.01f)
             {
                 _currentSpeed = 0f;
                 Velocity = Vector3.Zero;
-                State = state;
+                State = arrivalState;
             }
             return;
         }
@@ -250,19 +269,57 @@ public class NpcCharacter
         State = NpcState.Walking;
     }
 
+    private Vector3 RoutedTarget(Vector3 destination)
+    {
+        if (!_routeValid || HorizontalDistanceSquared(_routeDestination, destination) >
+            RouteDestinationTolerance * RouteDestinationTolerance)
+        {
+            NpcStreetRouting.BuildRoute(Position, destination, _route);
+            _routeDestination = destination;
+            _routeIndex = 0;
+            _routeValid = _route.Count > 0;
+        }
+
+        if (!_routeValid)
+            return destination;
+
+        while (_routeIndex < _route.Count - 1 &&
+               HorizontalDistanceSquared(Position, _route[_routeIndex]) <= RouteWaypointReach * RouteWaypointReach)
+            _routeIndex++;
+
+        return _route[Math.Clamp(_routeIndex, 0, _route.Count - 1)];
+    }
+
     private void Wander(float dt, NpcState idleState)
     {
         _idleTimer -= dt;
         if (_idleTimer <= 0)
         {
             _idleTimer = 3f + (float)_rng.NextDouble() * 6f;
-            _target = Position + new Vector3(
+            Vector3 rawTarget = Position + new Vector3(
                 (float)(_rng.NextDouble() - 0.5) * 30f,
                 0,
                 (float)(_rng.NextDouble() - 0.5) * 30f
             );
+            _target = NpcStreetRouting.NormalizeWanderDestination(rawTarget);
+            ClearRoute();
         }
         Goto(_target, dt, idleState);
+    }
+
+    private void ClearRoute()
+    {
+        _route.Clear();
+        _routeIndex = 0;
+        _routeValid = false;
+        _routeDestination = default;
+    }
+
+    private static float HorizontalDistanceSquared(Vector3 a, Vector3 b)
+    {
+        float dx = a.X - b.X;
+        float dz = a.Z - b.Z;
+        return dx * dx + dz * dz;
     }
 
     public string GetDialogue(float worldAwareness, HeroProgress progress)
@@ -391,6 +448,7 @@ public class NpcCharacter
         _currentSpeed = 0f;
         _idleTimer = 0f;
         _target = HomePos;
+        ClearRoute();
         AnimPhase = (float)(_rng.NextDouble() * MathHelper.TwoPi);
         AnimBlend = 0f;
     }

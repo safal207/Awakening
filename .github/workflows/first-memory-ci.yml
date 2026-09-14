@@ -12,6 +12,7 @@ on:
       - "feat/save-backup-recovery"
       - "feat/persistent-npc-awakening"
       - "test/dayloop-20-cycle"
+      - "feat/npc-street-routing"
   workflow_dispatch:
 
 jobs:
@@ -45,3 +46,6 @@ jobs:
 
       - name: 20-cycle DayLoop durability smoke
         run: dotnet run --project tests/DayLoopDurabilitySmoke/DayLoopDurabilitySmoke.csproj --configuration Release
+
+      - name: NPC route smoke
+        run: dotnet run --project tests/NpcRouteSmoke/NpcRouteSmoke.csproj --configuration Release
