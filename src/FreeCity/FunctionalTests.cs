@@ -165,6 +165,20 @@ public static class FunctionalTests
         Expect(progress.Day == 1, "restore clamps day to at least 1", failures);
         Expect(Nearly(progress.Memory, 0f) && Nearly(progress.Empathy, 100f), "restore clamps quality range", failures);
 
+        float memoryBeforeMorning = progress.Memory;
+        float curiosityBeforeMorning = progress.Curiosity;
+        float empathyBeforeMorning = progress.Empathy;
+        float agencyBeforeMorning = progress.Agency;
+        float courageBeforeMorning = progress.Courage;
+        progress.NewDay();
+        Expect(progress.Day == 2, "new day advances day counter", failures);
+        Expect(Nearly(progress.Memory, memoryBeforeMorning) &&
+               Nearly(progress.Curiosity, curiosityBeforeMorning) &&
+               Nearly(progress.Empathy, empathyBeforeMorning) &&
+               Nearly(progress.Agency, agencyBeforeMorning) &&
+               Nearly(progress.Courage, courageBeforeMorning),
+            "earned qualities survive a new morning without decay", failures);
+
         double applied = progress.ApplyOfflineGrowth(24 * 60);
         Expect(Nearly(applied, 12 * 60), "offline growth caps at 12 hours", failures);
     }
@@ -177,9 +191,19 @@ public static class FunctionalTests
 
         awareness.Restore(99f);
         var player = new NpcCharacter(Vector3.Zero, Vector3.Zero, seed: 1001);
+        for (int i = 0; i < 120; i++)
+            awareness.Update(player, timeOfDay: i % 24, dt: 60f);
+        Expect(Nearly(awareness.Level, 99f), "waiting never increases awareness", failures);
+        Expect(player.State != NpcState.Aware, "waiting alone cannot wake the player", failures);
+
+        awareness.Add(1f);
         awareness.Update(player, timeOfDay: 16f, dt: 2f);
-        Expect(Nearly(awareness.Level, 100f), "awareness reaches 100", failures);
-        Expect(player.State == NpcState.Aware, "awareness wakes the player", failures);
+        Expect(Nearly(awareness.Level, 100f), "explicit awareness event reaches 100", failures);
+        Expect(player.State == NpcState.Aware, "earned awareness wakes the player", failures);
+
+        awareness.Restore(0f);
+        awareness.Add(-50f);
+        Expect(Nearly(awareness.Level, 0f), "negative awareness event cannot underflow", failures);
     }
 
     private static void CheckNpcStatesAndDialogues(List<string> failures)
