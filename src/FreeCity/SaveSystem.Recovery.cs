@@ -104,6 +104,7 @@ public static partial class SaveSystem
 
             bool memoryClean = MemoryPersistence.TryRestore(data.MemoryLedger, out MemoryLedger ledger);
             progress.Ledger = ledger;
+            bool chapterClean = FirstMemoryChapterPersistence.TryRestore(progress, data.FirstMemoryChapter);
 
             bool spatialClean = ValidateSpatialRow(data.Seed, data.PlayerSpatial, out string spatialReason);
             PlayerSpatialPersistence.SetPending(progress, data.PlayerSpatial);
@@ -117,12 +118,14 @@ public static partial class SaveSystem
             int seed = data.Seed == 0 ? Environment.TickCount : data.Seed;
             candidate = new LoadedCandidate(seed, progress, data.TimeOfDay, data.Awareness, offlineMinutes, data.Npcs);
 
-            if (!memoryClean || !spatialClean)
+            if (!memoryClean || !spatialClean || !chapterClean)
             {
                 status = SaveCandidateStatus.Recoverable;
-                if (!memoryClean && !spatialClean)
-                    return "memory ledger and player spatial state require recovery";
-                return !memoryClean ? "memory ledger requires recovery" : spatialReason;
+                var reasons = new List<string>(3);
+                if (!memoryClean) reasons.Add("memory ledger");
+                if (!spatialClean) reasons.Add(spatialReason);
+                if (!chapterClean) reasons.Add("First Memory chapter state");
+                return string.Join(", ", reasons) + " requires recovery";
             }
 
             status = SaveCandidateStatus.Valid;
