@@ -33,6 +33,7 @@ public sealed class InteractionDetector
     public InteractionDetector(CityRenderer city)
     {
         _city = city;
+        ResidentIdentity.BindCity(city.Npcs);
         FirstMemorySpatial.ConfigureCity(city);
     }
 
