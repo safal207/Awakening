@@ -5,9 +5,9 @@ using OpenTK.Mathematics;
 namespace Probuzhdenie.FreeCity;
 
 /// <summary>
-/// World-space staging for the first memory slice. It owns no quest rewards:
-/// it only binds the narrative roles to this city, exposes the broken signal
-/// interaction point, and restores the spatial arrangement at day boundaries.
+/// World-space staging for the first memory chapter. It owns no quest rewards:
+/// it binds Lida/Mark/Nika to one city, exposes the broken signal interaction,
+/// and restores the meeting-space arrangement at day boundaries.
 /// </summary>
 public static class FirstMemorySpatial
 {
@@ -23,6 +23,7 @@ public static class FirstMemorySpatial
         public bool SignalObserved;
         public NpcCharacter? Lida;
         public NpcCharacter? Mark;
+        public NpcCharacter? Nika;
         public Vector3 MarkBaseline;
         public bool HasMarkBaseline;
     }
@@ -31,22 +32,28 @@ public static class FirstMemorySpatial
 
     public static void ConfigureCity(CityRenderer city)
     {
-        if (city.Player == null || city.Npcs.Count < 3) return;
+        if (city.Player == null || city.Npcs.Count < 4) return;
 
         State state = GetState(city.Progress);
         NpcCharacter lida = city.Npcs[1];
         NpcCharacter mark = city.Npcs[2];
+        NpcCharacter nika = city.Npcs[3];
 
         lida.AssignNarrativeRole(NarrativeRole.Lida);
         mark.AssignNarrativeRole(NarrativeRole.Mark);
+        nika.AssignNarrativeRole(NarrativeRole.Nika);
+        nika.Name = "Ника";
         state.Configured = true;
         state.Lida = lida;
         state.Mark = mark;
+        state.Nika = nika;
 
         Vector3 lidaPosition = city.ClampToWalkable(SignalPosition + new Vector3(0.2f, 0f, 1.55f), 0.25f);
         Vector3 markPosition = city.ClampToWalkable(SignalPosition + new Vector3(7.5f, 0f, 1.55f), 0.25f);
+        Vector3 nikaPosition = city.ClampToWalkable(SignalPosition + new Vector3(-5.4f, 0f, 5.0f), 0.25f);
         PlaceStationary(lida, lidaPosition);
         PlaceStationary(mark, markPosition);
+        PlaceStationary(nika, nikaPosition);
         state.MarkBaseline = markPosition;
         state.HasMarkBaseline = true;
         state.ObservedDay = city.Progress.Day;
@@ -55,12 +62,21 @@ public static class FirstMemorySpatial
             PlaceMarkNearLida(state);
     }
 
+    public static bool IsConfigured(HeroProgress progress) => GetState(progress).Configured;
+
     public static NpcCharacter? SignalInteractionTarget(CityRenderer city, Vector3 playerPosition, float range)
     {
         SyncDay(city.Progress);
         State state = GetState(city.Progress);
         if (!state.Configured || state.Lida == null || state.SignalObserved) return null;
-        if (city.Progress.Ledger.TryGetEvent(FirstMemorySlice.EventId, out _)) return null;
+
+        FirstMemoryChapterProgress chapter = FirstMemoryChapterState.For(city.Progress);
+        if (chapter.InvestigationCompleted || chapter.Branch != FirstMemoryBranch.None)
+            return null;
+        if (city.Progress.Ledger.TryGetEvent(FirstMemorySlice.EventId, out _) ||
+            city.Progress.Ledger.TryGetEvent(FirstMemorySlice.RepairEventId, out _))
+            return null;
+
         return Vector3.DistanceSquared(playerPosition, SignalPosition) <= range * range ? state.Lida : null;
     }
 
