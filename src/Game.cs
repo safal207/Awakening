@@ -17,12 +17,13 @@ public class Game : GameWindow
         MainMenu,
         Playing,
         PauseMenu,
-        Dialogue,
+        Settings,
+        Ending,
     }
 
     private const string GameTitle = "Пробуждение";
     private const float MaxFrameDelta = 0.1f;
-    private const float MouseYawSensitivity = 0.1f;
+    private const float MouseYawSensitivity = MathF.PI / 1800f;
     private const float MousePitchSensitivity = 0.1f;
     private const float MinCameraPitchDegrees = 5f;
     private const float MaxCameraPitchDegrees = 65f;
@@ -38,11 +39,20 @@ public class Game : GameWindow
     private readonly UiRenderer _ui = new();
     private readonly RuntimeProfileOptions? _profileOptions;
     private readonly RuntimeProfiler? _runtimeProfiler;
-    private readonly string[] _mainMenuItems = { "НАЧАТЬ", "ВЫХОД" };
-    private readonly string[] _pauseMenuItems = { "ПРОДОЛЖИТЬ", "ВЫХОД" };
+    private readonly GameSettings _settings;
+    private readonly string[] _mainMenuItems = { "НАЧАТЬ", "НАСТРОЙКИ", "ВЫХОД" };
+    private readonly string[] _pauseMenuItems = { "ПРОДОЛЖИТЬ", "НАСТРОЙКИ", "ВЫХОД" };
+    private readonly string[] _endingMenuItems = { "ПРОДОЛЖИТЬ ИССЛЕДОВАНИЕ", "ВЫХОД" };
+    private readonly (int Width, int Height)[] _resolutions =
+    {
+        (1024, 576),
+        (1280, 720),
+        (1600, 900),
+        (1920, 1080),
+    };
     private CityRenderer? _city;
     private CityRenderContext _cityRenderContext;
-    private int _shader, _modelL, _viewL, _projL, _colorL, _ambL, _lightL, _fogColL;
+    private int _shader, _modelL, _viewL, _projL, _colorL, _ambL, _lightL, _fogColL, _fogDensityL;
     private GameScreen _screen = GameScreen.MainMenu;
     private bool _captured;
     private int _menuIndex;
@@ -61,21 +71,30 @@ public class Game : GameWindow
     private float _dialogueFeedbackTimer;
     private double _profileElapsedSeconds;
     private PlayerController? _playerController;
-    private float _preDialogueCamDist = 14f;
+    private float _preDialogueCamDist = 8f;
     private float _preDialogueCamYaw;
     private float _preDialogueCamPitch = DefaultCameraPitchDegrees;
     private bool _dialogueCameraReturning;
     private InteractionDetector? _interactionDetector;
     private InteractionResult _currentInteraction;
-    private float _camDist = 14f, _camYaw, _camPitchDegrees = DefaultCameraPitchDegrees;
+    private float _camDist = 8f, _camYaw, _camPitchDegrees = DefaultCameraPitchDegrees;
     private float _smoothedMouseDx, _smoothedMouseDy;
-    private SpriteRenderer? _spriteRenderer;
-    private Texture? _logoSplash;
+    private readonly CharacterPreviewRenderer _heroPreview = new();
+    private readonly int[] _menuViewport = new int[4];
+    private float _heroPreviewTime, _heroPreviewYaw = -0.25f;
+    private bool _rotatingPreview;
+    private GameScreen _settingsReturnScreen = GameScreen.MainMenu;
+    private bool _endingAcknowledged;
 
-    public Game(RuntimeProfileOptions? profileOptions = null) : base(
-        GameWindowSettings.Default,
-        new NativeWindowSettings { Size = new Vector2i(1280, 720), Title = GameTitle })
+    public Game(RuntimeProfileOptions? profileOptions = null) : this(profileOptions, GameSettings.Load())
     {
+    }
+
+    private Game(RuntimeProfileOptions? profileOptions, GameSettings settings) : base(
+        GameWindowSettings.Default,
+        new NativeWindowSettings { Size = new Vector2i(settings.Width, settings.Height), Title = GameTitle, NumberOfSamples = 4 })
+    {
+        _settings = settings;
         _profileOptions = profileOptions;
         _runtimeProfiler = profileOptions != null ? new RuntimeProfiler(profileOptions) : null;
         _input = new Input(this);
@@ -85,9 +104,12 @@ public class Game : GameWindow
     protected override void OnLoad()
     {
         base.OnLoad();
-        VSync = _profileOptions == null ? VSyncMode.On : VSyncMode.Off;
+        VSync = _profileOptions == null && _settings.VSync ? VSyncMode.On : VSyncMode.Off;
+        if (_profileOptions == null && _settings.Fullscreen)
+            WindowState = WindowState.Fullscreen;
         GL.Enable(EnableCap.DepthTest);
         GL.Enable(EnableCap.CullFace);
+        GL.Enable(EnableCap.Multisample);
 
         _shader = MakeShader();
         _modelL = GL.GetUniformLocation(_shader, "model");
@@ -97,9 +119,15 @@ public class Game : GameWindow
         _ambL = GL.GetUniformLocation(_shader, "amb");
         _lightL = GL.GetUniformLocation(_shader, "light");
         _fogColL = GL.GetUniformLocation(_shader, "fogCol");
-        _cityRenderContext = new CityRenderContext(_shader, _modelL, _viewL, _projL, _colorL, _fogColL);
+        _fogDensityL = GL.GetUniformLocation(_shader, "fogDensity");
+        _cityRenderContext = new CityRenderContext(_shader, _modelL, _viewL, _projL, _colorL, _fogColL, _fogDensityL, _ambL,
+            GL.GetUniformLocation(_shader,"materialMode"), GL.GetUniformLocation(_shader,"worldPass"),
+            GL.GetUniformLocation(_shader,"lightMatrix"), GL.GetUniformLocation(_shader,"shadowStrength"),
+            GL.GetUniformLocation(_shader,"eyePosition"),GL.GetUniformLocation(_shader,"daylight"));
+        GL.UseProgram(_shader);
+        GL.Uniform1(GL.GetUniformLocation(_shader,"brickTexture"),0);
+        GL.Uniform1(GL.GetUniformLocation(_shader,"sunDepth"),1);
 
-        _spriteRenderer = new SpriteRenderer();
 
         int seed;
         HeroProgress progress;
@@ -127,6 +155,7 @@ public class Game : GameWindow
         }
 
         _city = new CityRenderer(seed, progress);
+        _city.ShadowsEnabled = _profileOptions != null || _settings.Shadows;
         _city.BuildGeometry();
         _city.TimeOfDay = timeOfDay;
         _city.Awareness.Restore(awareness);
@@ -146,6 +175,8 @@ public class Game : GameWindow
 
         if (_runtimeProfiler != null)
         {
+            ClientSize = new Vector2i(1280, 720);
+            WindowState = WindowState.Normal;
             _screen = GameScreen.Playing;
             _captured = false;
             CursorState = CursorState.Normal;
@@ -154,17 +185,28 @@ public class Game : GameWindow
             Console.WriteLine($"Runtime profile started for {_profileOptions!.DurationSeconds:F0}s. Report: {_profileOptions.ReportPath}");
         }
 
-        _logoSplash = Texture.CreateLogo();
     }
 
     protected override void OnUpdateFrame(FrameEventArgs args)
     {
         base.OnUpdateFrame(args);
+        if (_runtimeProfiler?.TimedOut == true)
+        {
+            _runtimeProfiler.Complete(CreateRuntimeProfileSnapshot(), interrupted: true);
+            Close();
+            return;
+        }
+        if (ClientSize.X <= 0 || ClientSize.Y <= 0)
+        {
+            System.Threading.Thread.Sleep(16);
+            return;
+        }
         _input.Update();
         float dt = Math.Min((float)args.Time, MaxFrameDelta);
 
         if (_screen != GameScreen.Playing)
         {
+            _heroPreviewTime += dt;
             UpdateMenu();
             return;
         }
@@ -198,8 +240,8 @@ public class Game : GameWindow
             _smoothedMouseDx = MathHelper.Lerp(_smoothedMouseDx, rawDx, mouseSmooth);
             _smoothedMouseDy = MathHelper.Lerp(_smoothedMouseDy, rawDy, mouseSmooth);
 
-            _camYaw -= _smoothedMouseDx * MouseYawSensitivity;
-            _camPitchDegrees = Math.Clamp(_camPitchDegrees - _smoothedMouseDy * MousePitchSensitivity, MinCameraPitchDegrees, MaxCameraPitchDegrees);
+            _camYaw -= _smoothedMouseDx * MouseYawSensitivity * _settings.MouseSensitivity;
+            _camPitchDegrees = Math.Clamp(_camPitchDegrees - _smoothedMouseDy * MousePitchSensitivity * _settings.MouseSensitivity, MinCameraPitchDegrees, MaxCameraPitchDegrees);
             if (_input.GpConnected)
             {
                 _camYaw -= _input.GpRightX * 4f * dt;
@@ -221,7 +263,17 @@ public class Game : GameWindow
         else
             _currentInteraction = default;
 
-        _city?.UpdateNpcs(dt);
+        if (_city != null)
+        {
+            _city.CharacterViewPosition = _cam.Pos;
+            _city.UpdateNpcs(dt);
+        }
+
+        if (_profileOptions == null && !_endingAcknowledged && _city is { Awareness.Level: >= 100f })
+        {
+            OpenEnding();
+            return;
+        }
 
         // Универсальная интеракция (E): поговорить, войти, выйти
         if (_city?.Player != null && _input.KeyPressed(Keys.E) && _dialogueNpc == null && _dialogueTimer <= 0)
@@ -302,10 +354,34 @@ public class Game : GameWindow
     private void UpdateMenu()
     {
         string[] items = CurrentMenuItems;
+        Vector2 mouse = _input.MousePosition / new Vector2(Math.Max(1, ClientSize.X), Math.Max(1, ClientSize.Y));
+        if (_input.LmbPressed)
+            _rotatingPreview = mouse.X >= 0.56f && mouse.X <= 0.94f && mouse.Y >= 0.24f && mouse.Y <= 0.84f;
+        if (!_input.Lmb) _rotatingPreview = false;
+        if (_rotatingPreview)
+            _heroPreviewYaw += _input.Dx * 0.012f;
+        if (_screen != GameScreen.Settings)
+        {
+            if (_input.KeyPressed(Keys.Left)) _heroPreviewYaw -= MathHelper.PiOver4;
+            if (_input.KeyPressed(Keys.Right)) _heroPreviewYaw += MathHelper.PiOver4;
+        }
+        if (!_rotatingPreview && (_input.Dx != 0 || _input.Dy != 0 || _input.LmbPressed))
+        {
+            bool settings = _screen == GameScreen.Settings;
+            for (int i = 0; i < items.Length; i++)
+            {
+                float y = MenuItemY(i, settings);
+                if (mouse.X < 0.08f || mouse.X > 0.50f || mouse.Y < y || mouse.Y > y + MenuItemHeight(settings)) continue;
+                _menuIndex = i;
+                if (_input.LmbPressed) { SelectMenuItem(); return; }
+                break;
+            }
+        }
 
         if (_input.KeyPressed(Keys.Escape) || _input.GpStartPressed || _input.GpBPressed)
         {
-            if (_screen == GameScreen.PauseMenu) ResumeGame();
+            if (_screen == GameScreen.Settings) CloseSettings();
+            else if (_screen == GameScreen.PauseMenu) ResumeGame();
             else Close();
             return;
         }
@@ -316,23 +392,127 @@ public class Game : GameWindow
         if (_input.KeyPressed(Keys.Down) || _input.KeyPressed(Keys.S) || _input.GpLeftY > 0.5f)
             _menuIndex = (_menuIndex + 1) % items.Length;
 
+        if (_screen == GameScreen.Settings)
+        {
+            if (_input.KeyPressed(Keys.Left) || _input.KeyPressed(Keys.A))
+                ChangeSetting(-1);
+            if (_input.KeyPressed(Keys.Right) || _input.KeyPressed(Keys.D))
+                ChangeSetting(1);
+        }
+
         if (_input.KeyPressed(Keys.Enter) || _input.KeyPressed(Keys.Space) || _input.GpAPressed)
             SelectMenuItem();
     }
 
-    private string[] CurrentMenuItems => _screen == GameScreen.MainMenu ? _mainMenuItems : _pauseMenuItems;
+    private string[] CurrentMenuItems => _screen switch
+    {
+        GameScreen.MainMenu => _mainMenuItems,
+        GameScreen.PauseMenu => _pauseMenuItems,
+        GameScreen.Ending => _endingMenuItems,
+        GameScreen.Settings => new[]
+        {
+            $"РАЗРЕШЕНИЕ  {_settings.Width}x{_settings.Height}",
+            $"ПОЛНЫЙ ЭКРАН  {OnOff(_settings.Fullscreen)}",
+            $"ВЕРТИКАЛЬНАЯ СИНХР.  {OnOff(_settings.VSync)}",
+            $"ЧУВСТВИТЕЛЬНОСТЬ  {(int)(_settings.MouseSensitivity * 100f)}%",
+            $"СОЛНЕЧНЫЕ ТЕНИ  {OnOff(_settings.Shadows)}",
+            "НАЗАД",
+        },
+        _ => Array.Empty<string>(),
+    };
 
     private void SelectMenuItem()
     {
+        if (_screen == GameScreen.Settings)
+        {
+            if (_menuIndex == 5)
+                CloseSettings();
+            else
+                ChangeSetting(1);
+            return;
+        }
+
+        if (_screen == GameScreen.Ending)
+        {
+            if (_menuIndex == 0)
+            {
+                _endingAcknowledged = true;
+                ResumeGame();
+            }
+            else
+            {
+                Close();
+            }
+            return;
+        }
+
         if (_screen == GameScreen.MainMenu)
         {
             if (_menuIndex == 0) StartGame();
+            else if (_menuIndex == 1) OpenSettings(GameScreen.MainMenu);
             else Close();
             return;
         }
 
         if (_menuIndex == 0) ResumeGame();
+        else if (_menuIndex == 1) OpenSettings(GameScreen.PauseMenu);
         else Close();
+    }
+
+    private static string OnOff(bool enabled) => enabled ? "ВКЛ" : "ВЫКЛ";
+
+    private void OpenSettings(GameScreen returnScreen)
+    {
+        _settingsReturnScreen = returnScreen;
+        _screen = GameScreen.Settings;
+        _menuIndex = 0;
+        _captured = false;
+        CursorState = CursorState.Normal;
+        Title = $"{GameTitle} - Настройки";
+    }
+
+    private void CloseSettings()
+    {
+        _settings.Save();
+        _screen = _settingsReturnScreen;
+        _menuIndex = 0;
+        Title = _screen == GameScreen.PauseMenu ? $"{GameTitle} - Меню" : GameTitle;
+    }
+
+    private void ChangeSetting(int direction)
+    {
+        switch (_menuIndex)
+        {
+            case 0:
+                int current = Array.FindIndex(_resolutions,
+                    resolution => resolution.Width == _settings.Width && resolution.Height == _settings.Height);
+                if (current < 0) current = 1;
+                current = (current + Math.Sign(direction) + _resolutions.Length) % _resolutions.Length;
+                (_settings.Width, _settings.Height) = _resolutions[current];
+                if (WindowState != WindowState.Fullscreen)
+                    Size = new Vector2i(_settings.Width, _settings.Height);
+                break;
+            case 1:
+                _settings.Fullscreen = !_settings.Fullscreen;
+                WindowState = _settings.Fullscreen ? WindowState.Fullscreen : WindowState.Normal;
+                if (!_settings.Fullscreen)
+                    Size = new Vector2i(_settings.Width, _settings.Height);
+                break;
+            case 2:
+                _settings.VSync = !_settings.VSync;
+                VSync = _settings.VSync ? VSyncMode.On : VSyncMode.Off;
+                break;
+            case 3:
+                _settings.MouseSensitivity += Math.Sign(direction) * 0.1f;
+                _settings.MouseSensitivity = Math.Clamp(_settings.MouseSensitivity, 0.5f, 2f);
+                break;
+            case 4:
+                _settings.Shadows = !_settings.Shadows;
+                if (_city != null) _city.ShadowsEnabled = _settings.Shadows;
+                break;
+        }
+
+        _settings.Save();
     }
 
     private void StartGame()
@@ -352,6 +532,16 @@ public class Game : GameWindow
         _captured = false;
         CursorState = CursorState.Normal;
         Title = $"{GameTitle} - Меню";
+    }
+
+    private void OpenEnding()
+    {
+        _city?.SaveGame();
+        _screen = GameScreen.Ending;
+        _menuIndex = 0;
+        _captured = false;
+        CursorState = CursorState.Normal;
+        Title = $"{GameTitle} - Финал";
     }
 
     private void ResumeGame()
@@ -404,7 +594,7 @@ public class Game : GameWindow
         if (_city?.Player == null) return;
         _camYaw = _city.Player.Rotation - MathF.PI;
         _camPitchDegrees = DefaultCameraPitchDegrees;
-        _camDist = 11f;
+        _camDist = 8f;
         UpdateThirdPerson(0);
         _cam.SnapToTarget();
     }
@@ -475,11 +665,14 @@ public class Game : GameWindow
             Vector3 lookTarget = npcPos + new Vector3(0, npcH * 0.78f, 0);
 
             // Smooth lerp camera position and look target
+            camTarget = _city.ResolveCameraPosition(lookTarget, camTarget);
             _cam.TargetPos = Vector3.Lerp(_cam.TargetPos, camTarget, lerpFactor);
-            _cam.Front = Vector3.Normalize(lookTarget - _cam.TargetPos);
+            _cam.UpdateFollow(dt);
+            _cam.Pos = _city.ResolveCameraPosition(lookTarget, _cam.Pos);
+            _city.HidePlayerForCamera = Vector3.DistanceSquared(lookTarget, _cam.Pos) < 2.4f * 2.4f;
+            _cam.Front = Vector3.Normalize(lookTarget - _cam.Pos);
             _cam.Right = Vector3.Normalize(Vector3.Cross(_cam.Front, Vector3.UnitY));
             _cam.Up = Vector3.Normalize(Vector3.Cross(_cam.Right, _cam.Front));
-            _cam.UpdateFollow(dt);
             return;
         }
 
@@ -499,29 +692,30 @@ public class Game : GameWindow
         }
 
         float yr = _camYaw, pr = MathHelper.DegreesToRadians(_camPitchDegrees);
-        _cam.TargetPos = p + new Vector3(
+        Vector3 lookAt = p + new Vector3(0, playerH * 0.7f, 0);
+        Vector3 desiredCamera = lookAt + new Vector3(
             _camDist * MathF.Cos(pr) * MathF.Sin(yr),
-            _camDist * MathF.Sin(pr) + playerH * 1.4f,
+            _camDist * MathF.Sin(pr),
             _camDist * MathF.Cos(pr) * MathF.Cos(yr));
-        _cam.Front = Vector3.Normalize(p + new Vector3(0, playerH * 0.7f, 0) - _cam.TargetPos);
-        _cam.Right = Vector3.Normalize(Vector3.Cross(_cam.Front, Vector3.UnitY));
-        _cam.Up = Vector3.Normalize(Vector3.Cross(_cam.Right, _cam.Front));
+        _cam.TargetPos = _city.ResolveCameraPosition(lookAt, desiredCamera);
         _cam.Yaw = MathHelper.RadiansToDegrees(_camYaw);
         _cam.Pitch = _camPitchDegrees;
         _cam.UpdateFollow(dt);
+        _cam.Pos = _city.ResolveCameraPosition(lookAt, _cam.Pos);
+        _city.HidePlayerForCamera = Vector3.DistanceSquared(lookAt, _cam.Pos) < 2.4f * 2.4f;
+        _cam.Front = Vector3.Normalize(lookAt - _cam.Pos);
+        _cam.Right = Vector3.Normalize(Vector3.Cross(_cam.Front, Vector3.UnitY));
+        _cam.Up = Vector3.Normalize(Vector3.Cross(_cam.Right, _cam.Front));
     }
 
     protected override void OnRenderFrame(FrameEventArgs args)
     {
         base.OnRenderFrame(args);
+        if (ClientSize.X <= 0 || ClientSize.Y <= 0) return;
 
         float t = _city?.TimeOfDay ?? 8f;
-        float day = Math.Clamp(MathF.Sin((t - 6f) / 12f * MathF.PI), 0.1f, 1f);
-        GL.ClearColor(
-            0.15f + 0.4f * day,
-            0.2f + 0.5f * day,
-            0.4f + 0.55f * day,
-            1f);
+        SceneLighting lighting = SceneLighting.At(t);
+        GL.ClearColor(lighting.Sky.X,lighting.Sky.Y,lighting.Sky.Z,1);
         GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
 
         if (_screen == GameScreen.Playing)
@@ -535,13 +729,10 @@ public class Game : GameWindow
             GL.UniformMatrix4(_modelL, false, ref id);
             GL.Uniform3(_colorL, -1f, -1f, -1f);
 
-            float amb = 0.2f + 0.4f * day;
-            float sunX = MathF.Cos((t - 6f) / 12f * MathF.PI) * 0.6f;
-            float sunY = MathF.Sin((t - 6f) / 12f * MathF.PI) * 0.8f + 0.1f;
-            GL.Uniform3(_ambL, amb, amb, amb);
-            GL.Uniform3(_lightL, sunX, sunY, 0.3f);
+            GL.Uniform3(_ambL,lighting.Ambient);
+            GL.Uniform3(_lightL,lighting.Sun);
 
-            Vector3 fogCol = new(0.15f + 0.4f * day, 0.2f + 0.5f * day, 0.4f + 0.55f * day);
+            Vector3 fogCol = lighting.Sky;
             GL.Uniform3(_fogColL, fogCol.X, fogCol.Y, fogCol.Z);
 
             _city?.Render(_cityRenderContext, ref view, ref proj, fogCol);
@@ -556,107 +747,68 @@ public class Game : GameWindow
         UpdateRuntimeProfile(args.Time);
     }
 
+    private static float MenuItemY(int index, bool settings) => 0.40f + index * (settings ? 0.075f : 0.105f);
+    private static float MenuItemHeight(bool settings) => settings ? 0.058f : 0.074f;
+
     private void RenderMenu()
     {
         _ui.Begin(ClientSize.X, ClientSize.Y);
+        Vector3 background = new(0.055f, 0.060f, 0.062f);
+        Vector3 accent = new(0.18f, 0.48f, 0.74f);
+        Vector3 text = new(0.91f, 0.93f, 0.92f);
+        Vector3 dim = new(0.60f, 0.64f, 0.65f);
+        Vector3 warm = new(0.87f, 0.71f, 0.44f);
+        _ui.Rect(0, 0, 1, 1, background);
+        _ui.Rect(0.55f, 0, 0.45f, 1, new Vector3(0.085f, 0.077f, 0.080f));
+        _ui.Rect(0.08f, 0.20f, 0.84f, 0.002f, new Vector3(0.20f, 0.22f, 0.23f));
+        DrawMenuText("ПРОБУЖДЕНИЕ", 0.08f, 0.095f, 0.008f, 0.84f, text);
 
-        Vector3 bg = new(0.024f, 0.031f, 0.037f);
-        Vector3 panel = new(0.055f, 0.067f, 0.074f);
-        Vector3 panel2 = new(0.085f, 0.101f, 0.11f);
-        Vector3 accent = new(0.16f, 0.48f, 0.78f);
-        Vector3 accentDark = new(0.08f, 0.25f, 0.43f);
-        Vector3 warm = new(0.93f, 0.77f, 0.36f);
-        Vector3 text = new(0.88f, 0.92f, 0.93f);
-        Vector3 dim = new(0.55f, 0.63f, 0.66f);
-
-        _ui.Rect(0f, 0f, 1f, 1f, bg);
-        _ui.Rect(0f, 0f, 1f, 0.055f, new Vector3(0.035f, 0.045f, 0.052f));
-        _ui.Rect(0.08f, 0.14f, 0.38f, 0.68f, panel);
-        _ui.Rect(0.105f, 0.18f, 0.006f, 0.40f, accent);
-        _ui.Rect(0.56f, 0.14f, 0.34f, 0.68f, new Vector3(0.035f, 0.043f, 0.048f));
-        _ui.Rect(0.58f, 0.16f, 0.30f, 0.64f, new Vector3(0.045f, 0.055f, 0.061f));
-
-        _ui.Render(_shader, _modelL, _viewL, _projL, _colorL, _ambL, _lightL, _fogColL);
-        _ui.Begin(ClientSize.X, ClientSize.Y);
-        if (_logoSplash != null && _spriteRenderer != null)
+        string heading = _screen switch
         {
-            _logoSplash.Bind(0);
-            var id2 = Matrix4.Identity;
-            const float logouiW = 0.34f, logouiH = 0.085f;
-            float logouix = 0.5f - logouiW * 0.5f, logouiy = 0.1f;
-            float lndcX = (logouix + logouiW * 0.5f) * 2f - 1f;
-            float lndcY = 1f - (logouiy + logouiH * 0.5f) * 2f;
-            float lndcW = logouiW * 2f, lndcH = logouiH * 2f;
-            _spriteRenderer.Begin();
-            _spriteRenderer.Add(new Vector3(lndcX, lndcY, 0f), lndcW, lndcH, new Vector3(1f, 0.95f, 0.75f), 1f);
-            _spriteRenderer.Flush(ref id2, ref id2);
-        }
+            GameScreen.PauseMenu => "ПАУЗА",
+            GameScreen.Settings => "НАСТРОЙКИ",
+            GameScreen.Ending => "ТЫ ПРОСНУЛСЯ",
+            _ => "НОВЫЙ ЦИКЛ",
+        };
+        DrawMenuText(heading, 0.08f, 0.27f, 0.0044f, 0.42f, dim);
+        if (_screen == GameScreen.Ending)
+            DrawMenuText("ТЕПЕРЬ ВЫБОР ЗА ТОБОЙ.", 0.08f, 0.33f, 0.003f, 0.42f, warm);
+        else if (_screen == GameScreen.MainMenu && _offlineGrowthMinutes >= 1)
+            DrawMenuText($"ГЕРОЙ РОС {Math.Ceiling(_offlineGrowthMinutes)} МИН",
+                0.08f, 0.33f, 0.003f, 0.42f, warm);
 
-        string heading = _screen == GameScreen.PauseMenu ? "МЕНЮ ПАУЗЫ" : "НОВЫЙ ЦИКЛ";
-        _ui.Text(heading, 0.13f, 0.285f, 0.0047f, dim);
-
-        if (_offlineGrowthMinutes >= 1)
-        {
-            string offline = $"ГЕРОЙ РОС {Math.Ceiling(_offlineGrowthMinutes)} МИН";
-            _ui.Text(offline, 0.13f, 0.325f, 0.0042f, warm);
-        }
-
+        bool settings = _screen == GameScreen.Settings;
         string[] items = CurrentMenuItems;
         for (int i = 0; i < items.Length; i++)
         {
-            float y = 0.43f + i * 0.105f;
+            float y = MenuItemY(i, settings), height = MenuItemHeight(settings);
             bool selected = i == _menuIndex;
-            _ui.Rect(0.13f, y, 0.28f, 0.062f, selected ? accent : panel2);
-            if (selected)
-            {
-                _ui.Rect(0.13f, y, 0.012f, 0.062f, warm);
-            }
-
-            float itemSize = 0.0054f;
-            _ui.Text(items[i], 0.27f - _ui.MeasureText(items[i], itemSize) / 2f, y + 0.019f, itemSize, selected ? text : dim);
+            _ui.Rect(0.08f, y, 0.42f, height, selected ? accent : new Vector3(0.105f, 0.12f, 0.13f));
+            if (selected) _ui.Rect(0.08f, y, 0.003f, height, warm);
+            float size = Math.Min(settings ? 0.0033f : 0.0042f,
+                0.37f / Math.Max(0.001f, _ui.MeasureText(items[i], 1)));
+            _ui.Text(items[i], 0.104f, y + (height - size * 7) * 0.5f, size, selected ? text : dim);
         }
-
-        _ui.Text("ГЕРОЙ", 0.66f, 0.18f, 0.005f, dim);
-        RenderHeroPreview(0.73f, 0.235f, 1.15f);
-        _ui.Rect(0.62f, 0.735f, 0.22f, 0.004f, accentDark);
+        DrawMenuText("ГЕРОЙ", 0.60f, 0.87f, 0.0035f, 0.30f, dim);
+        _ui.Rect(0.60f, 0.92f, 0.29f, 0.002f, accent);
         _ui.Render(_shader, _modelL, _viewL, _projL, _colorL, _ambL, _lightL, _fogColL);
+
+        if (_city?.Player != null)
+        {
+            // UI coordinates are top-down; OpenGL viewports start at the bottom.
+            GL.GetInteger(GetPName.Viewport, _menuViewport);
+            var bounds = new Box2i(
+                (int)(_menuViewport[2] * 0.56f), (int)(_menuViewport[3] * 0.16f),
+                (int)(_menuViewport[2] * 0.94f), (int)(_menuViewport[3] * 0.76f));
+            _heroPreview.Render(_city.Player, _heroPreviewTime, _heroPreviewYaw,
+                bounds, _cityRenderContext, _ambL, _lightL);
+        }
     }
 
-    private void RenderHeroPreview(float cx, float y, float scale)
+    private void DrawMenuText(string text, float x, float y, float size, float width, Vector3 color)
     {
-        float s = 0.18f * scale;
-        Vector3 skin = HeroStyle.Skin;
-        Vector3 skinShadow = skin * 0.85f;
-        Vector3 shirt = HeroStyle.ShirtBlue;
-        Vector3 shirtDark = HeroStyle.ShirtDark;
-        Vector3 shirtLight = HeroStyle.ShirtLight;
-        Vector3 pants = HeroStyle.Pants;
-        Vector3 hair = HeroStyle.Hair;
-        Vector3 shoes = new(0.025f, 0.025f, 0.03f);
-        Vector3 eye = new(0.03f, 0.03f, 0.06f);
-
-        _ui.Rect(cx - s * 0.11f, y + s * 0.03f, s * 0.22f, s * 0.05f, hair);
-        _ui.Rect(cx - s * 0.16f, y + s * 0.08f, s * 0.32f, s * 0.08f, hair);
-        _ui.Rect(cx - s * 0.18f, y + s * 0.16f, s * 0.36f, s * 0.30f, skin);
-        _ui.Rect(cx - s * 0.14f, y + s * 0.46f, s * 0.28f, s * 0.08f, skinShadow);
-        _ui.Rect(cx - s * 0.075f, y + s * 0.29f, s * 0.035f, s * 0.035f, eye);
-        _ui.Rect(cx + s * 0.04f, y + s * 0.29f, s * 0.035f, s * 0.035f, eye);
-        _ui.Rect(cx - s * 0.045f, y + s * 0.42f, s * 0.09f, s * 0.026f, skinShadow);
-
-        _ui.Rect(cx - s * 0.09f, y + s * 0.53f, s * 0.18f, s * 0.10f, skin);
-        _ui.Rect(cx - s * 0.33f, y + s * 0.64f, s * 0.66f, s * 0.12f, shirtDark);
-        _ui.Rect(cx - s * 0.25f, y + s * 0.70f, s * 0.50f, s * 0.52f, shirt);
-        _ui.Rect(cx - s * 0.045f, y + s * 0.73f, s * 0.09f, s * 0.48f, shirtLight);
-
-        _ui.Rect(cx - s * 0.46f, y + s * 0.72f, s * 0.13f, s * 0.46f, skin);
-        _ui.Rect(cx + s * 0.33f, y + s * 0.72f, s * 0.13f, s * 0.46f, skin);
-        _ui.Rect(cx - s * 0.49f, y + s * 1.16f, s * 0.16f, s * 0.10f, skinShadow);
-        _ui.Rect(cx + s * 0.33f, y + s * 1.16f, s * 0.16f, s * 0.10f, skinShadow);
-
-        _ui.Rect(cx - s * 0.25f, y + s * 1.22f, s * 0.20f, s * 0.58f, pants);
-        _ui.Rect(cx + s * 0.05f, y + s * 1.22f, s * 0.20f, s * 0.58f, pants);
-        _ui.Rect(cx - s * 0.30f, y + s * 1.79f, s * 0.26f, s * 0.10f, shoes);
-        _ui.Rect(cx + s * 0.04f, y + s * 1.79f, s * 0.26f, s * 0.10f, shoes);
+        size = Math.Min(size, width / Math.Max(0.001f, _ui.MeasureText(text, 1)));
+        _ui.Text(text, x, y, size, color);
     }
 
     private void RenderHud()
@@ -921,14 +1073,8 @@ public class Game : GameWindow
 
     private static int MakeShader()
     {
-        string vs = @"#version 330 core
-layout(location=0)in vec3 p;layout(location=1)in vec3 c;layout(location=2)in vec3 n;
-uniform mat4 model,view,proj;uniform vec3 col,amb,light;
-out vec3 fC;out vec3 fN;
-void main(){vec4 w=model*vec4(p,1);gl_Position=proj*view*w;fC=col.r<-0.5?c:col;fN=mat3(model)*n;}";
-        string fs = @"#version 330 core
-in vec3 fC;in vec3 fN;uniform vec3 amb,light;out vec4 o;
-void main(){vec3 l=normalize(light);float d=max(dot(normalize(fN),l),0);o=vec4(fC*(amb+(1-amb)*d),1);}";
+        string vs = WorldShader.Vertex;
+        string fs = WorldShader.Fragment;
         int v = CompileShader(ShaderType.VertexShader, vs);
         int f = CompileShader(ShaderType.FragmentShader, fs);
         int p = GL.CreateProgram();
@@ -974,8 +1120,7 @@ void main(){vec3 l=normalize(light);float d=max(dot(normalize(fN),l),0);o=vec4(f
             _city?.SaveGame();
         _city?.Dispose();
         _ui.Dispose();
-        _spriteRenderer?.Dispose();
-        _logoSplash?.Dispose();
+        _heroPreview.Dispose();
         if (_crossVbo != 0) GL.DeleteBuffer(_crossVbo);
         if (_crossVao != 0) GL.DeleteVertexArray(_crossVao);
         if (_shader != 0) GL.DeleteProgram(_shader);
@@ -1023,7 +1168,7 @@ void main(){vec3 l=normalize(light);float d=max(dot(normalize(fN),l),0);o=vec4(f
         _runtimeProfiler.RecordFrame(frameSeconds, snapshot);
         if (!_runtimeProfiler.ShouldComplete) return;
 
-        _runtimeProfiler.Complete(snapshot);
+        _runtimeProfiler.Complete(snapshot, interrupted: _runtimeProfiler.TimedOut);
         Close();
     }
 
@@ -1033,12 +1178,13 @@ void main(){vec3 l=normalize(light);float d=max(dot(normalize(fN),l),0);o=vec4(f
             ElapsedSeconds: _profileElapsedSeconds,
             ManagedMemoryBytes: GC.GetTotalMemory(forceFullCollection: false),
             ThreadAllocatedBytes: GC.GetAllocatedBytesForCurrentThread(),
-            EstimatedGpuBufferBytes: (_city?.EstimatedGpuBufferBytes ?? 0) + _ui.GpuBufferBytes + _crossGpuBytes,
+            EstimatedGpuBufferBytes: (_city?.EstimatedGpuBufferBytes ?? 0) + _ui.GpuBufferBytes + _crossGpuBytes + _heroPreview.GpuBufferBytes,
             Gen0Collections: GC.CollectionCount(0),
             Gen1Collections: GC.CollectionCount(1),
             Gen2Collections: GC.CollectionCount(2),
             NpcCount: _city?.NpcCount ?? 0,
-            TimeOfDay: _city?.TimeOfDay ?? 0f);
+            TimeOfDay: _city?.TimeOfDay ?? 0f,
+            EstimatedGpuTextureBytes: _city?.EstimatedGpuTextureBytes ?? 0);
     }
 
     private static RuntimeProfileGlInfo ReadGlInfo()

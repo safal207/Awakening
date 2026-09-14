@@ -7,8 +7,10 @@ using System.Text.Json;
 
 namespace Probuzhdenie.FreeCity;
 
-public static class SaveSystem
+public static partial class SaveSystem
 {
+    private const int CurrentSchemaVersion = 2;
+
     private static readonly string SaveDirectory = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
         "Probuzhdenie");
@@ -20,6 +22,10 @@ public static class SaveSystem
 
     public class NpcSaveData
     {
+        // World-local stable identity. Null means a legacy pre-PersistentId save.
+        public int? PersistentId { get; set; }
+        // Nullable keeps legacy rows distinguishable from explicit modern state.
+        public bool? IsAwakened { get; set; }
         public float Friendliness { get; set; }
         public float Trust { get; set; }
         public int TimesTalked { get; set; }
@@ -30,6 +36,7 @@ public static class SaveSystem
 
     private class SaveData
     {
+        public int SchemaVersion { get; set; }
         public int Seed { get; set; }
         public int Day { get; set; }
         public float Memory { get; set; }
@@ -46,6 +53,9 @@ public static class SaveSystem
         public int DailyTalkProgress { get; set; }
         public bool DailyObjectiveCompleted { get; set; }
         public List<int>? DailyTalkedNpcs { get; set; }
+        public MemoryPersistenceSnapshot? MemoryLedger { get; set; }
+        public PlayerSpatialSaveData? PlayerSpatial { get; set; }
+        public FirstMemoryChapterSaveData? FirstMemoryChapter { get; set; }
     }
 
     public static void Save(int seed, HeroProgress progress, AwarenessSystem awareness, float timeOfDay, IReadOnlyList<NpcCharacter>? npcs = null)
@@ -76,7 +86,7 @@ public static class SaveSystem
             SaveToPath(path, 515151, progress, awareness, 7.25f, DateTime.UtcNow, null);
             var overwritten = LoadFromPath(path);
 
-            bool ok =
+            bool coreOk =
                 loaded.seed == 424242 &&
                 loaded.progress.Day == 2 &&
                 Math.Abs(loaded.timeOfDay - 13.5f) < 0.001f &&
@@ -87,7 +97,14 @@ public static class SaveSystem
                 overwritten.seed == 515151 &&
                 Math.Abs(overwritten.timeOfDay - 7.25f) < 0.001f;
 
-            message = ok ? "Save/load self-test passed." : "Save/load self-test failed.";
+            bool memoryOk = RunMemoryPersistenceSelfTest(out string memoryMessage);
+            bool spatialOk = RunPlayerSpatialPersistenceSelfTest(out string spatialMessage);
+            bool recoveryOk = RunSaveRecoverySelfTest(out string recoveryMessage);
+            bool npcAwakeningOk = RunNpcAwakeningPersistenceSelfTest(out string npcAwakeningMessage);
+            bool ok = coreOk && memoryOk && spatialOk && recoveryOk && npcAwakeningOk;
+            message = ok
+                ? $"Save/load self-test passed. {memoryMessage} {spatialMessage} {recoveryMessage} {npcAwakeningMessage}"
+                : $"Save/load self-test failed. Core={coreOk}; {memoryMessage} {spatialMessage} {recoveryMessage} {npcAwakeningMessage}";
             return ok;
         }
         catch (Exception e)
@@ -100,16 +117,24 @@ public static class SaveSystem
             try
             {
                 if (File.Exists(path)) File.Delete(path);
+                string backup = BackupPathFor(path);
+                if (File.Exists(backup)) File.Delete(backup);
             }
             catch
             {
-                // Best-effort cleanup for a temp self-test file.
+                // Best-effort cleanup for temp self-test files.
             }
         }
     }
 
     private static void SaveToPath(string path, int seed, HeroProgress progress, AwarenessSystem awareness, float timeOfDay, DateTime savedUtc, IReadOnlyList<NpcCharacter>? npcs)
     {
+        if (progress.SaveWritesBlocked)
+        {
+            Console.WriteLine("Save skipped: loaded save requires recovery acknowledgement before it can be overwritten.");
+            return;
+        }
+
         try
         {
             string? directory = Path.GetDirectoryName(path);
@@ -118,6 +143,7 @@ public static class SaveSystem
 
             var data = new SaveData
             {
+                SchemaVersion = CurrentSchemaVersion,
                 Seed = seed,
                 Day = progress.Day,
                 Memory = progress.Memory,
@@ -129,8 +155,10 @@ public static class SaveSystem
                 DiscoveredEggs = new List<string>(progress.DiscoveredEggs),
                 TimeOfDay = timeOfDay,
                 LastSavedUtc = savedUtc,
-                Npcs = npcs?.Select(n => new NpcSaveData
+                Npcs = npcs?.Select((n, persistentId) => new NpcSaveData
                 {
+                    PersistentId = persistentId,
+                    IsAwakened = n.IsAwakened,
                     Friendliness = n.Friendliness,
                     Trust = n.Trust,
                     TimesTalked = n.TimesTalked,
@@ -142,6 +170,9 @@ public static class SaveSystem
                 DailyTalkProgress = progress.DailyTalkProgress,
                 DailyObjectiveCompleted = progress.DailyObjectiveCompleted,
                 DailyTalkedNpcs = new List<int>(progress.DailyTalkedNpcs),
+                MemoryLedger = MemoryPersistence.Capture(progress.Ledger),
+                PlayerSpatial = PlayerSpatialPersistence.Capture(npcs),
+                FirstMemoryChapter = FirstMemoryChapterPersistence.Capture(progress),
             };
 
             string json = JsonSerializer.Serialize(data, SaveOptions);
@@ -155,53 +186,49 @@ public static class SaveSystem
 
     private static (int seed, HeroProgress progress, float timeOfDay, float awareness, double offlineMinutes, List<NpcSaveData>? npcs) LoadFromPath(string path)
     {
-        if (!File.Exists(path))
-            return (Environment.TickCount, new HeroProgress(), 8f, 0f, 0d, null);
-
-        try
-        {
-            string json = File.ReadAllText(path);
-            var data = JsonSerializer.Deserialize<SaveData>(json, LoadOptions);
-            if (data == null) return (Environment.TickCount, new HeroProgress(), 8f, 0f, 0d, null);
-
-            var progress = new HeroProgress();
-            progress.Restore(data.Day, data.Memory, data.Curiosity, data.Empathy, data.Agency, data.Courage);
-            progress.LoadDiscoveredEggs(data.DiscoveredEggs);
-            progress.LoadDailyObjective(data.DailyObjectiveDay, data.DailyTalkProgress, data.DailyObjectiveCompleted, data.DailyTalkedNpcs);
-
-            double minutesAway = Math.Max(0d, (DateTime.UtcNow - data.LastSavedUtc.ToUniversalTime()).TotalMinutes);
-            double offlineMinutes = data.Awareness >= HeroProgress.OfflineGrowthAwarenessThreshold
-                ? progress.ApplyOfflineGrowth(minutesAway)
-                : 0d;
-
-            return (data.Seed == 0 ? Environment.TickCount : data.Seed, progress, data.TimeOfDay, data.Awareness, offlineMinutes, data.Npcs);
-        }
-        catch (Exception e)
-        {
-            Console.WriteLine($"Failed to load game: {e}");
-            return (Environment.TickCount, new HeroProgress(), 8f, 0f, 0d, null);
-        }
+        return LoadFromPathWithRecovery(path);
     }
 
     private static void WriteAllTextAtomically(string path, string contents)
     {
         string directory = Path.GetDirectoryName(path) ?? ".";
         string tempPath = Path.Combine(directory, $".{Path.GetFileName(path)}.{Guid.NewGuid():N}.tmp");
+        string backupPath = BackupPathFor(path);
+        string backupTempPath = Path.Combine(directory, $".{Path.GetFileName(path)}.{Guid.NewGuid():N}.backup.tmp");
+        bool stageBackup = File.Exists(path) && IsFullyValidSaveFile(path);
 
         try
         {
             File.WriteAllText(tempPath, contents, SaveEncoding);
 
+            if (stageBackup)
+                File.Copy(path, backupTempPath, overwrite: true);
+
             if (File.Exists(path))
                 File.Replace(tempPath, path, null);
             else
                 File.Move(tempPath, path);
+
+            if (stageBackup && File.Exists(backupTempPath))
+            {
+                try
+                {
+                    File.Move(backupTempPath, backupPath, overwrite: true);
+                }
+                catch (Exception e)
+                {
+                    // Primary save already succeeded. Keep any older valid backup
+                    // rather than turning backup promotion into a failed game save.
+                    Console.WriteLine($"Primary save succeeded, but backup promotion failed: {e.Message}");
+                }
+            }
         }
         finally
         {
             try
             {
                 if (File.Exists(tempPath)) File.Delete(tempPath);
+                if (File.Exists(backupTempPath)) File.Delete(backupTempPath);
             }
             catch
             {

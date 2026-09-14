@@ -12,12 +12,26 @@ public enum HeroQuality
     Courage,
 }
 
+public enum SaveRecoveryState
+{
+    None,
+    RecoveredFromBackup,
+    PartialPrimary,
+    LoadFailed,
+    Acknowledged,
+}
+
 public class HeroProgress
 {
     public const float OfflineGrowthAwarenessThreshold = 70f;
     private const double MaxOfflineGrowthMinutes = 12 * 60;
 
     public const int DailyTalkGoal = 2;
+
+    public MemoryLedger Ledger { get; internal set; } = new();
+    public bool SaveWritesBlocked { get; internal set; }
+    public SaveRecoveryState RecoveryState { get; private set; }
+    public string RecoveryMessage { get; private set; } = "";
 
     public int Day { get; private set; } = 1;
     public float Memory { get; private set; } = 0f; // 0-100
@@ -42,19 +56,40 @@ public class HeroProgress
 
     public void NewDay()
     {
+        Ledger.ApplySverka();
         Day++;
-        // Slight decay of qualities overnight to encourage active play
-        Memory = Math.Max(0f, Memory - 0.5f);
-        Curiosity = Math.Max(0f, Curiosity - 0.5f);
-        Empathy = Math.Max(0f, Empathy - 0.5f);
-        Agency = Math.Max(0f, Agency - 0.5f);
-        Courage = Math.Max(0f, Courage - 0.5f);
+
+        // Earned qualities are persistent memory of player decisions. A morning
+        // reset changes the daily schedule, not what the hero has already learned.
 
         // Reset daily objective
         DailyTalkProgress = 0;
         DailyObjectiveDay = Day;
         DailyObjectiveCompleted = false;
         _dailyTalkedNpcs.Clear();
+    }
+
+    internal void MarkRecovery(SaveRecoveryState state, string message, bool blockWrites = true)
+    {
+        RecoveryState = state;
+        RecoveryMessage = message ?? "";
+        if (blockWrites)
+            SaveWritesBlocked = true;
+    }
+
+    /// <summary>
+    /// Explicitly allows a recovered/partially recovered session to overwrite the
+    /// primary save again. LoadFailed remains blocked because no trustworthy world
+    /// state was recovered.
+    /// </summary>
+    public bool AcknowledgeRecoveryForOverwrite()
+    {
+        if (RecoveryState is not (SaveRecoveryState.RecoveredFromBackup or SaveRecoveryState.PartialPrimary))
+            return false;
+
+        SaveWritesBlocked = false;
+        RecoveryState = SaveRecoveryState.Acknowledged;
+        return true;
     }
 
     public bool DiscoverEgg(string eggId, float memoryGain = 5f, float curiosityGain = 5f, float empathyGain = 0f, float agencyGain = 0f, float courageGain = 0f)

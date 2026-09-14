@@ -5,12 +5,20 @@
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <Product>Пробуждение</Product>
+    <Version>0.3.0-alpha</Version>
+    <Authors>Probuzhdenie contributors</Authors>
+    <Description>Атмосферная low-poly игра о пробуждении героя в повторяющемся городе.</Description>
+    <Copyright>Copyright © 2026 Probuzhdenie contributors</Copyright>
     <AssemblyName>Probuzhdenie</AssemblyName>
     <RootNamespace>Probuzhdenie</RootNamespace>
     <AssemblyTitle>Пробуждение</AssemblyTitle>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Remove="unreal/**/*.cs" />
+    <Compile Remove="tests/**/*.cs" />
     <PackageReference Include="OpenTK" Version="4.8.0" />
+    <PackageReference Include="StbImageSharp" Version="2.30.16" />
+    <None Update="assets/**/*" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

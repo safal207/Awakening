@@ -33,12 +33,20 @@ public sealed class InteractionDetector
     public InteractionDetector(CityRenderer city)
     {
         _city = city;
+        ResidentIdentity.BindCity(city.Npcs);
+        NpcAwakeningPersistence.RegisterCity(city);
+        PlayerSpatialPersistence.RegisterCity(city);
+        FirstMemorySpatial.ConfigureCity(city);
     }
 
     public InteractionResult Detect(Vector3 playerPos)
     {
         if (_city.IsInside)
             return new InteractionResult(InteractionType.Exit, "[E] Выйти");
+
+        var signalTarget = FirstMemorySpatial.SignalInteractionTarget(_city, playerPos, InteractionRange);
+        if (signalTarget != null)
+            return new InteractionResult(InteractionType.Talk, "[E] Осмотреть сигнал", signalTarget);
 
         var npc = _city.FindClosestNpc(playerPos, InteractionRange);
         if (npc != null)

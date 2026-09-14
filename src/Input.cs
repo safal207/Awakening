@@ -16,6 +16,7 @@ public class Input
     private int _wheelZoomOutFrames;
     public float Dx { get; private set; }
     public float Dy { get; private set; }
+    public Vector2 MousePosition => _last;
     public float ScrollDeltaY { get; private set; }
     public bool Lmb { get; private set; }
     public bool Rmb { get; private set; }

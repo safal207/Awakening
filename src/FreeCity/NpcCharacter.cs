@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using OpenTK.Mathematics;
 
 namespace Probuzhdenie.FreeCity;
@@ -22,7 +23,8 @@ public readonly record struct DialogueChoice(
     float CuriosityGain,
     float EmpathyGain,
     float AgencyGain,
-    float CourageGain);
+    float CourageGain,
+    string ActionId = "");
 
 public class NpcCharacter
 {
@@ -34,9 +36,11 @@ public class NpcCharacter
     private Vector3 _pantsColor;
     private Vector3 _hairColor;
     private float _height = 1.7f;
+    private bool _isAwakened;
 
     public int Id;
     public string Name;
+    public NarrativeRole NarrativeRole { get; private set; }
     public Vector3 Position;
     public Vector3 Velocity;
     public Vector3 Color
@@ -63,6 +67,7 @@ public class NpcCharacter
     public float TargetRotation;
     public NpcState State = NpcState.Walking;
     public float Awareness;
+    public bool IsAwakened => _isAwakened || State == NpcState.Aware;
     public float Height
     {
         get => _height;
@@ -92,12 +97,15 @@ public class NpcCharacter
     private float _idleTimer;
     private float _walkSpeed = 2.5f;
     private float _currentSpeed;
+    private readonly List<Vector3> _route = new(8);
+    private int _routeIndex;
+    private Vector3 _routeDestination;
+    private bool _routeValid;
     private const float Accel = 8f;
     private const float Decel = 12f;
     private const float RotSpeed = 6f;
-    private readonly bool _shopsAfterWork;
-    private readonly float _shoppingStart;
-    private readonly float _shoppingEnd;
+    private const float RouteWaypointReach = 1.2f;
+    private const float RouteDestinationTolerance = 0.5f;
 
     public NpcCharacter(Vector3 home, Vector3 work, int seed)
     {
@@ -131,11 +139,69 @@ public class NpcCharacter
         _shopsAfterWork = _rng.NextDouble() < 0.45;
         _shoppingStart = WorkEnd + 0.2f + (float)_rng.NextDouble() * 1.2f;
         _shoppingEnd = Math.Min(SleepHour - 0.5f, _shoppingStart + 1.1f + (float)_rng.NextDouble() * 1.5f);
+
+        // In a normal game process the first two background citizens become the
+        // two named characters of the first vertical slice. Tests can override this explicitly.
+        if (Id == 1) AssignNarrativeRole(NarrativeRole.Lida);
+        else if (Id == 2) AssignNarrativeRole(NarrativeRole.Mark);
+    }
+
+    private readonly bool _shopsAfterWork;
+    private readonly float _shoppingStart;
+    private readonly float _shoppingEnd;
+
+    public void AssignNarrativeRole(NarrativeRole role)
+    {
+        NarrativeRole = role;
+        Name = role switch
+        {
+            NarrativeRole.Lida => "Лида",
+            NarrativeRole.Mark => "Марк",
+            _ => Name,
+        };
+        FirstMemorySlice.RegisterCharacter(this);
+    }
+
+    public void Awaken()
+    {
+        _isAwakened = true;
+        Awareness = 100f;
+        State = NpcState.Aware;
+        Velocity = Vector3.Zero;
+        _currentSpeed = 0f;
+        AnimBlend = 0f;
+        ClearRoute();
+    }
+
+    public void RestorePersistentState(bool awakened, float awareness, NpcState state)
+    {
+        _isAwakened = awakened;
+        Awareness = Math.Clamp(float.IsFinite(awareness) ? awareness : 0f, 0f, 100f);
+        ClearRoute();
+        if (awakened)
+        {
+            Awareness = 100f;
+            State = NpcState.Aware;
+            Velocity = Vector3.Zero;
+            _currentSpeed = 0f;
+            AnimBlend = 0f;
+        }
+        else
+        {
+            State = state == NpcState.Aware ? NpcState.Walking : state;
+        }
     }
 
     public void Update(float timeOfDay, float dt)
     {
-        if (State == NpcState.Aware) return;
+        if (IsAwakened)
+        {
+            State = NpcState.Aware;
+            Velocity = Vector3.Zero;
+            _currentSpeed = 0f;
+            AnimBlend = 0f;
+            return;
+        }
 
         if (timeOfDay < WakeHour || timeOfDay >= SleepHour)
             Goto(HomePos, dt, NpcState.Sleeping);
@@ -144,7 +210,10 @@ public class NpcCharacter
         else if (timeOfDay >= WorkStart && timeOfDay < WorkEnd)
         {
             if (Vector3.DistanceSquared(Position, WorkPos) < 4f)
+            {
                 State = NpcState.Working;
+                ClearRoute();
+            }
             else
                 Goto(WorkPos, dt, NpcState.Working);
         }
@@ -164,19 +233,26 @@ public class NpcCharacter
         AnimBlend = Math.Clamp(speed / _walkSpeed, 0f, 1f);
     }
 
-    private void Goto(Vector3 target, float dt, NpcState state)
+    private void Goto(Vector3 destination, float dt, NpcState arrivalState)
     {
+        Vector3 target = RoutedTarget(destination);
         Vector3 dir = target - Position;
         dir.Y = 0;
         float distSq = dir.LengthSquared;
         if (distSq < 1f)
         {
+            if (_routeValid && _routeIndex < _route.Count - 1)
+            {
+                _routeIndex++;
+                return;
+            }
+
             _currentSpeed = Math.Max(0f, _currentSpeed - Decel * dt);
             if (_currentSpeed < 0.01f)
             {
                 _currentSpeed = 0f;
                 Velocity = Vector3.Zero;
-                State = state;
+                State = arrivalState;
             }
             return;
         }
@@ -193,19 +269,57 @@ public class NpcCharacter
         State = NpcState.Walking;
     }
 
+    private Vector3 RoutedTarget(Vector3 destination)
+    {
+        if (!_routeValid || HorizontalDistanceSquared(_routeDestination, destination) >
+            RouteDestinationTolerance * RouteDestinationTolerance)
+        {
+            NpcStreetRouting.BuildRoute(Position, destination, _route);
+            _routeDestination = destination;
+            _routeIndex = 0;
+            _routeValid = _route.Count > 0;
+        }
+
+        if (!_routeValid)
+            return destination;
+
+        while (_routeIndex < _route.Count - 1 &&
+               HorizontalDistanceSquared(Position, _route[_routeIndex]) <= RouteWaypointReach * RouteWaypointReach)
+            _routeIndex++;
+
+        return _route[Math.Clamp(_routeIndex, 0, _route.Count - 1)];
+    }
+
     private void Wander(float dt, NpcState idleState)
     {
         _idleTimer -= dt;
         if (_idleTimer <= 0)
         {
             _idleTimer = 3f + (float)_rng.NextDouble() * 6f;
-            _target = Position + new Vector3(
+            Vector3 rawTarget = Position + new Vector3(
                 (float)(_rng.NextDouble() - 0.5) * 30f,
                 0,
                 (float)(_rng.NextDouble() - 0.5) * 30f
             );
+            _target = NpcStreetRouting.NormalizeWanderDestination(rawTarget);
+            ClearRoute();
         }
         Goto(_target, dt, idleState);
+    }
+
+    private void ClearRoute()
+    {
+        _route.Clear();
+        _routeIndex = 0;
+        _routeValid = false;
+        _routeDestination = default;
+    }
+
+    private static float HorizontalDistanceSquared(Vector3 a, Vector3 b)
+    {
+        float dx = a.X - b.X;
+        float dz = a.Z - b.Z;
+        return dx * dx + dz * dz;
     }
 
     public string GetDialogue(float worldAwareness, HeroProgress progress)
@@ -217,7 +331,10 @@ public class NpcCharacter
 
     public (string npcLine, DialogueChoice[] choices) GetDialogueState(float worldAwareness, HeroProgress progress)
     {
-        bool aware = State == NpcState.Aware || worldAwareness >= 85f;
+        if (FirstMemorySlice.TryGetDialogue(this, progress, out var narrativeDialogue))
+            return narrativeDialogue;
+
+        bool aware = IsAwakened || worldAwareness >= 85f;
         bool fractured = worldAwareness >= 35f || progress.Memory >= 25f || progress.Curiosity >= 25f;
         float friendliness = Friendliness;
         float trust = Trust;
@@ -314,18 +431,24 @@ public class NpcCharacter
         TimesTalked++;
         progress.AddQualities(choice.MemoryGain, choice.CuriosityGain, choice.EmpathyGain, choice.AgencyGain, choice.CourageGain);
         if (choice.MemoryGain > 0 || choice.CuriosityGain > 0 || choice.EmpathyGain > 0 || choice.AgencyGain > 0 || choice.CourageGain > 0)
+        {
             Awareness = Math.Min(100f, Awareness + 1f);
+            if (Awareness >= 100f)
+                Awaken();
+        }
+        FirstMemorySlice.ApplyChoice(this, choice, progress);
     }
 
     public void Reset()
     {
-        State = NpcState.Walking;
-        Awareness = 0f;
+        State = IsAwakened ? NpcState.Aware : NpcState.Walking;
+        Awareness = IsAwakened ? 100f : 0f;
         Position = HomePos;
         Velocity = Vector3.Zero;
         _currentSpeed = 0f;
         _idleTimer = 0f;
         _target = HomePos;
+        ClearRoute();
         AnimPhase = (float)(_rng.NextDouble() * MathHelper.TwoPi);
         AnimBlend = 0f;
     }
