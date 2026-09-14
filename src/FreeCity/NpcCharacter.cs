@@ -35,6 +35,7 @@ public class NpcCharacter
     private Vector3 _pantsColor;
     private Vector3 _hairColor;
     private float _height = 1.7f;
+    private bool _isAwakened;
 
     public int Id;
     public string Name;
@@ -65,6 +66,7 @@ public class NpcCharacter
     public float TargetRotation;
     public NpcState State = NpcState.Walking;
     public float Awareness;
+    public bool IsAwakened => _isAwakened || State == NpcState.Aware;
     public float Height
     {
         get => _height;
@@ -97,9 +99,6 @@ public class NpcCharacter
     private const float Accel = 8f;
     private const float Decel = 12f;
     private const float RotSpeed = 6f;
-    private readonly bool _shopsAfterWork;
-    private readonly float _shoppingStart;
-    private readonly float _shoppingEnd;
 
     public NpcCharacter(Vector3 home, Vector3 work, int seed)
     {
@@ -140,6 +139,10 @@ public class NpcCharacter
         else if (Id == 2) AssignNarrativeRole(NarrativeRole.Mark);
     }
 
+    private readonly bool _shopsAfterWork;
+    private readonly float _shoppingStart;
+    private readonly float _shoppingEnd;
+
     public void AssignNarrativeRole(NarrativeRole role)
     {
         NarrativeRole = role;
@@ -152,9 +155,44 @@ public class NpcCharacter
         FirstMemorySlice.RegisterCharacter(this);
     }
 
+    public void Awaken()
+    {
+        _isAwakened = true;
+        Awareness = 100f;
+        State = NpcState.Aware;
+        Velocity = Vector3.Zero;
+        _currentSpeed = 0f;
+        AnimBlend = 0f;
+    }
+
+    public void RestorePersistentState(bool awakened, float awareness, NpcState state)
+    {
+        _isAwakened = awakened;
+        Awareness = Math.Clamp(float.IsFinite(awareness) ? awareness : 0f, 0f, 100f);
+        if (awakened)
+        {
+            Awareness = 100f;
+            State = NpcState.Aware;
+            Velocity = Vector3.Zero;
+            _currentSpeed = 0f;
+            AnimBlend = 0f;
+        }
+        else
+        {
+            State = state == NpcState.Aware ? NpcState.Walking : state;
+        }
+    }
+
     public void Update(float timeOfDay, float dt)
     {
-        if (State == NpcState.Aware) return;
+        if (IsAwakened)
+        {
+            State = NpcState.Aware;
+            Velocity = Vector3.Zero;
+            _currentSpeed = 0f;
+            AnimBlend = 0f;
+            return;
+        }
 
         if (timeOfDay < WakeHour || timeOfDay >= SleepHour)
             Goto(HomePos, dt, NpcState.Sleeping);
@@ -239,7 +277,7 @@ public class NpcCharacter
         if (FirstMemorySlice.TryGetDialogue(this, progress, out var narrativeDialogue))
             return narrativeDialogue;
 
-        bool aware = State == NpcState.Aware || worldAwareness >= 85f;
+        bool aware = IsAwakened || worldAwareness >= 85f;
         bool fractured = worldAwareness >= 35f || progress.Memory >= 25f || progress.Curiosity >= 25f;
         float friendliness = Friendliness;
         float trust = Trust;
@@ -336,14 +374,18 @@ public class NpcCharacter
         TimesTalked++;
         progress.AddQualities(choice.MemoryGain, choice.CuriosityGain, choice.EmpathyGain, choice.AgencyGain, choice.CourageGain);
         if (choice.MemoryGain > 0 || choice.CuriosityGain > 0 || choice.EmpathyGain > 0 || choice.AgencyGain > 0 || choice.CourageGain > 0)
+        {
             Awareness = Math.Min(100f, Awareness + 1f);
+            if (Awareness >= 100f)
+                Awaken();
+        }
         FirstMemorySlice.ApplyChoice(this, choice, progress);
     }
 
     public void Reset()
     {
-        State = NpcState.Walking;
-        Awareness = 0f;
+        State = IsAwakened ? NpcState.Aware : NpcState.Walking;
+        Awareness = IsAwakened ? 100f : 0f;
         Position = HomePos;
         Velocity = Vector3.Zero;
         _currentSpeed = 0f;
