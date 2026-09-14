@@ -95,10 +95,11 @@ public static partial class SaveSystem
                 Math.Abs(overwritten.timeOfDay - 7.25f) < 0.001f;
 
             bool memoryOk = RunMemoryPersistenceSelfTest(out string memoryMessage);
-            bool ok = coreOk && memoryOk;
+            bool spatialOk = RunPlayerSpatialPersistenceSelfTest(out string spatialMessage);
+            bool ok = coreOk && memoryOk && spatialOk;
             message = ok
-                ? $"Save/load self-test passed. {memoryMessage}"
-                : $"Save/load self-test failed. Core={coreOk}; {memoryMessage}";
+                ? $"Save/load self-test passed. {memoryMessage} {spatialMessage}"
+                : $"Save/load self-test failed. Core={coreOk}; {memoryMessage} {spatialMessage}";
             return ok;
         }
         catch (Exception e)
