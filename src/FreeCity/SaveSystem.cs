@@ -22,6 +22,8 @@ public static partial class SaveSystem
 
     public class NpcSaveData
     {
+        // World-local stable identity. Null means a legacy pre-PersistentId save.
+        public int? PersistentId { get; set; }
         public float Friendliness { get; set; }
         public float Trust { get; set; }
         public int TimesTalked { get; set; }
@@ -144,8 +146,9 @@ public static partial class SaveSystem
                 DiscoveredEggs = new List<string>(progress.DiscoveredEggs),
                 TimeOfDay = timeOfDay,
                 LastSavedUtc = savedUtc,
-                Npcs = npcs?.Select(n => new NpcSaveData
+                Npcs = npcs?.Select((n, persistentId) => new NpcSaveData
                 {
+                    PersistentId = persistentId,
                     Friendliness = n.Friendliness,
                     Trust = n.Trust,
                     TimesTalked = n.TimesTalked,
