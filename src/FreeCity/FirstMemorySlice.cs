@@ -178,7 +178,7 @@ public static class FirstMemorySlice
             return ledger.TryCreateAnchor(
                 EventId,
                 TraceId,
-                npc.Id,
+                ResidentIdentity.GetPersistentId(npc),
                 WitnessConsent.Accepted);
         }
 
