@@ -1,4 +1,5 @@
 using System;
+using System.Runtime.CompilerServices;
 
 namespace Probuzhdenie.FreeCity;
 
@@ -109,4 +110,12 @@ public sealed class FirstMemoryChapterProgress
             NikaArchived = false;
         }
     }
+}
+
+public static class FirstMemoryChapterState
+{
+    private static readonly ConditionalWeakTable<HeroProgress, FirstMemoryChapterProgress> States = new();
+
+    public static FirstMemoryChapterProgress For(HeroProgress progress) =>
+        States.GetValue(progress, _ => new FirstMemoryChapterProgress());
 }
