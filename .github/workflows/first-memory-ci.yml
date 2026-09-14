@@ -5,6 +5,7 @@ on:
     branches:
       - "feat/first-memory-slice"
       - "feat/memory-anchor-persistence"
+      - "feat/first-memory-spatial"
   workflow_dispatch:
 
 jobs:
@@ -29,3 +30,6 @@ jobs:
 
       - name: Save and memory self-tests
         run: dotnet run --configuration Release --no-build -- --self-test
+
+      - name: First memory spatial smoke
+        run: dotnet run --project tests/FirstMemorySpatialSmoke/FirstMemorySpatialSmoke.csproj --configuration Release
