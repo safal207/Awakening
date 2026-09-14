@@ -55,6 +55,7 @@ public static partial class SaveSystem
         public List<int>? DailyTalkedNpcs { get; set; }
         public MemoryPersistenceSnapshot? MemoryLedger { get; set; }
         public PlayerSpatialSaveData? PlayerSpatial { get; set; }
+        public FirstMemoryChapterSaveData? FirstMemoryChapter { get; set; }
     }
 
     public static void Save(int seed, HeroProgress progress, AwarenessSystem awareness, float timeOfDay, IReadOnlyList<NpcCharacter>? npcs = null)
@@ -171,6 +172,7 @@ public static partial class SaveSystem
                 DailyTalkedNpcs = new List<int>(progress.DailyTalkedNpcs),
                 MemoryLedger = MemoryPersistence.Capture(progress.Ledger),
                 PlayerSpatial = PlayerSpatialPersistence.Capture(npcs),
+                FirstMemoryChapter = FirstMemoryChapterPersistence.Capture(progress),
             };
 
             string json = JsonSerializer.Serialize(data, SaveOptions);
