@@ -9,6 +9,7 @@ on:
       - "fix/dayloop-awareness"
       - "feat/stable-resident-id"
       - "feat/player-spatial-save"
+      - "feat/save-backup-recovery"
   workflow_dispatch:
 
 jobs:
