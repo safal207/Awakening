@@ -8,6 +8,7 @@ on:
       - "feat/first-memory-spatial"
       - "fix/dayloop-awareness"
       - "feat/stable-resident-id"
+      - "feat/player-spatial-save"
   workflow_dispatch:
 
 jobs:

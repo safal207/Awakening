@@ -34,6 +34,7 @@ public sealed class InteractionDetector
     {
         _city = city;
         ResidentIdentity.BindCity(city.Npcs);
+        PlayerSpatialPersistence.RegisterCity(city);
         FirstMemorySpatial.ConfigureCity(city);
     }
 

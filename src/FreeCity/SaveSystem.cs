@@ -52,6 +52,7 @@ public static partial class SaveSystem
         public bool DailyObjectiveCompleted { get; set; }
         public List<int>? DailyTalkedNpcs { get; set; }
         public MemoryPersistenceSnapshot? MemoryLedger { get; set; }
+        public PlayerSpatialSaveData? PlayerSpatial { get; set; }
     }
 
     public static void Save(int seed, HeroProgress progress, AwarenessSystem awareness, float timeOfDay, IReadOnlyList<NpcCharacter>? npcs = null)
@@ -94,10 +95,11 @@ public static partial class SaveSystem
                 Math.Abs(overwritten.timeOfDay - 7.25f) < 0.001f;
 
             bool memoryOk = RunMemoryPersistenceSelfTest(out string memoryMessage);
-            bool ok = coreOk && memoryOk;
+            bool spatialOk = RunPlayerSpatialPersistenceSelfTest(out string spatialMessage);
+            bool ok = coreOk && memoryOk && spatialOk;
             message = ok
-                ? $"Save/load self-test passed. {memoryMessage}"
-                : $"Save/load self-test failed. Core={coreOk}; {memoryMessage}";
+                ? $"Save/load self-test passed. {memoryMessage} {spatialMessage}"
+                : $"Save/load self-test failed. Core={coreOk}; {memoryMessage} {spatialMessage}";
             return ok;
         }
         catch (Exception e)
@@ -161,6 +163,7 @@ public static partial class SaveSystem
                 DailyObjectiveCompleted = progress.DailyObjectiveCompleted,
                 DailyTalkedNpcs = new List<int>(progress.DailyTalkedNpcs),
                 MemoryLedger = MemoryPersistence.Capture(progress.Ledger),
+                PlayerSpatial = PlayerSpatialPersistence.Capture(npcs),
             };
 
             string json = JsonSerializer.Serialize(data, SaveOptions);
@@ -202,6 +205,8 @@ public static partial class SaveSystem
                     progress.SaveWritesBlocked = true;
                     Console.WriteLine("Memory ledger was partially recovered; automatic writes are blocked to preserve the source save.");
                 }
+
+                PlayerSpatialPersistence.SetPending(progress, data.PlayerSpatial);
             }
 
             double minutesAway = Math.Max(0d, (DateTime.UtcNow - data.LastSavedUtc.ToUniversalTime()).TotalMinutes);
