@@ -24,6 +24,8 @@ public static partial class SaveSystem
     {
         // World-local stable identity. Null means a legacy pre-PersistentId save.
         public int? PersistentId { get; set; }
+        // Nullable keeps legacy rows distinguishable from explicit modern state.
+        public bool? IsAwakened { get; set; }
         public float Friendliness { get; set; }
         public float Trust { get; set; }
         public int TimesTalked { get; set; }
@@ -97,10 +99,11 @@ public static partial class SaveSystem
             bool memoryOk = RunMemoryPersistenceSelfTest(out string memoryMessage);
             bool spatialOk = RunPlayerSpatialPersistenceSelfTest(out string spatialMessage);
             bool recoveryOk = RunSaveRecoverySelfTest(out string recoveryMessage);
-            bool ok = coreOk && memoryOk && spatialOk && recoveryOk;
+            bool npcAwakeningOk = RunNpcAwakeningPersistenceSelfTest(out string npcAwakeningMessage);
+            bool ok = coreOk && memoryOk && spatialOk && recoveryOk && npcAwakeningOk;
             message = ok
-                ? $"Save/load self-test passed. {memoryMessage} {spatialMessage} {recoveryMessage}"
-                : $"Save/load self-test failed. Core={coreOk}; {memoryMessage} {spatialMessage} {recoveryMessage}";
+                ? $"Save/load self-test passed. {memoryMessage} {spatialMessage} {recoveryMessage} {npcAwakeningMessage}"
+                : $"Save/load self-test failed. Core={coreOk}; {memoryMessage} {spatialMessage} {recoveryMessage} {npcAwakeningMessage}";
             return ok;
         }
         catch (Exception e)
@@ -154,6 +157,7 @@ public static partial class SaveSystem
                 Npcs = npcs?.Select((n, persistentId) => new NpcSaveData
                 {
                     PersistentId = persistentId,
+                    IsAwakened = n.IsAwakened,
                     Friendliness = n.Friendliness,
                     Trust = n.Trust,
                     TimesTalked = n.TimesTalked,
