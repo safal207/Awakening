@@ -6,6 +6,7 @@ on:
       - "feat/first-memory-slice"
       - "feat/memory-anchor-persistence"
       - "feat/first-memory-spatial"
+      - "fix/dayloop-awareness"
   workflow_dispatch:
 
 jobs:

@@ -24,10 +24,12 @@ public class AwarenessSystem
 
     public string CurrentMessage => Messages[Math.Clamp(Stage, 0, Messages.Length - 1)];
 
+    /// <summary>
+    /// Awareness is earned by explicit gameplay events. Time itself never grants it.
+    /// </summary>
     public void Add(float amount)
     {
-        if (Level < 100)
-            Level = Math.Min(100, Level + amount);
+        Level = Math.Clamp(Level + amount, 0f, 100f);
     }
 
     public void Restore(float level)
@@ -35,23 +37,15 @@ public class AwarenessSystem
         Level = Math.Clamp(level, 0f, 100f);
     }
 
+    /// <summary>
+    /// Projects already-earned awareness onto the player state. This method must
+    /// not advance Level from timeOfDay or dt: waiting is not a gameplay choice.
+    /// </summary>
     public void Update(NpcCharacter player, float timeOfDay, float dt)
     {
         if (player.State == NpcState.Aware) return;
 
-        if (Stage == 0 && timeOfDay > 12)
-            Add(dt * 0.5f);
-
-        if (Stage >= 1)
-            Add(dt * 0.2f);
-
-        if (Stage >= 2 && Level > 60)
-            Add(dt * 0.4f);
-
-        if (Stage == 3 && Level >= 80)
-            Add(dt * 1.0f);
-
-        if (Level >= 100)
+        if (Level >= 100f)
         {
             player.State = NpcState.Aware;
             player.Color = new OpenTK.Mathematics.Vector3(0.2f, 0.6f, 1.0f);
