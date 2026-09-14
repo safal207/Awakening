@@ -33,12 +33,15 @@ try
     var detector = new InteractionDetector(city);
     NpcCharacter lida = city.Npcs[1];
     NpcCharacter mark = city.Npcs[2];
+    NpcCharacter nika = city.Npcs[3];
     Vector3 baseline = mark.Position;
 
     Require(lida.NarrativeRole == NarrativeRole.Lida && lida.Name == "Лида",
         "city-local second citizen must be Lida");
     Require(mark.NarrativeRole == NarrativeRole.Mark && mark.Name == "Марк",
         "city-local third citizen must be Mark");
+    Require(nika.NarrativeRole == NarrativeRole.Nika && nika.Name == "Ника",
+        "city-local fourth citizen must be Nika");
     Require(Vector3.Distance(lida.Position, FirstMemorySpatial.SignalPosition) < 3f,
         "Lida must stand beside the broken signal");
     Require(Vector3.Distance(mark.Position, lida.Position) > 5f,
@@ -51,35 +54,33 @@ try
 
     DialogueChoice[] before = lida.GetDialogueState(0f, progress).choices;
     Require(HasAction(before, FirstMemorySlice.InspectSignalActionId),
-        "inspection action must exist before help");
+        "inspection action must exist on morning 1");
     Require(!HasAction(before, FirstMemorySlice.HelpLidaActionId),
-        "help action must be locked before inspection");
+        "meeting must be locked on morning 1");
 
     lida.ApplyChoice(FindAction(before, FirstMemorySlice.InspectSignalActionId), progress);
     Require(FirstMemorySpatial.IsSignalObserved(progress), "signal must become observed");
+    Require(!HasAction(lida.GetDialogueState(0f, progress).choices, FirstMemorySlice.HelpLidaActionId),
+        "inspection must not unlock meeting before the next morning");
 
-    InteractionResult afterInspect = detector.Detect(FirstMemorySpatial.SignalPosition);
-    Require(!afterInspect.Prompt.Contains("Осмотреть сигнал", StringComparison.OrdinalIgnoreCase),
-        "observed signal must stop intercepting E");
-
+    progress.NewDay();
+    _ = detector.Detect(FirstMemorySpatial.SignalPosition); // sync day state
     DialogueChoice help = FindAction(lida.GetDialogueState(0f, progress).choices, FirstMemorySlice.HelpLidaActionId);
     lida.ApplyChoice(help, progress);
     Require(progress.Ledger.TryGetEvent(FirstMemorySlice.EventId, out var eventData) &&
             eventData?.LocationId == FirstMemorySlice.LocationId,
-        "helping Lida must create the tram-plaza event");
+        "morning-2 help must create the tram-plaza event");
     Require(Vector3.Distance(mark.Position, lida.Position) < 3f,
-        "help choice must bring Mark into the meeting space");
+        "meeting choice must bring Mark into the meeting space");
 
     progress.NewDay();
-    _ = detector.Detect(FirstMemorySpatial.SignalPosition); // sync spatial day state
+    _ = detector.Detect(FirstMemorySpatial.SignalPosition);
     Require(!progress.Ledger.TryGetEvent(FirstMemorySlice.EventId, out _),
         "unanchored event must be forgotten by Sverka");
     Require(Vector3.Distance(mark.Position, baseline) < 0.01f,
         "unanchored Mark movement must reset to baseline");
-    Require(!FirstMemorySpatial.IsSignalObserved(progress),
-        "signal observation must reset on the new day");
 
-    // Separate anchored scenario: the spatial consequence survives into the next morning.
+    // Separate anchored scenario: the spatial consequence survives into morning 3.
     var anchoredProgress = new HeroProgress();
     var anchoredCity = new CityRenderer(424244, anchoredProgress);
     var anchoredDetector = new InteractionDetector(anchoredCity);
@@ -89,6 +90,8 @@ try
     anchoredLida.ApplyChoice(
         FindAction(anchoredLida.GetDialogueState(0f, anchoredProgress).choices, FirstMemorySlice.InspectSignalActionId),
         anchoredProgress);
+    anchoredProgress.NewDay();
+    _ = anchoredDetector.Detect(FirstMemorySpatial.SignalPosition);
     anchoredLida.ApplyChoice(
         FindAction(anchoredLida.GetDialogueState(0f, anchoredProgress).choices, FirstMemorySlice.HelpLidaActionId),
         anchoredProgress);
@@ -102,14 +105,14 @@ try
     anchoredProgress.NewDay();
     _ = anchoredDetector.Detect(FirstMemorySpatial.SignalPosition);
     Require(anchoredProgress.Ledger.IsPersisted(FirstMemorySlice.EventId),
-        "anchored event must survive Sverka");
+        "anchored event must survive morning-3 Sverka");
     Require(Vector3.Distance(anchoredMark.Position, anchoredLida.Position) < 3f,
-        "anchored relationship must remain spatially visible the next morning");
+        "anchored relationship must remain spatially visible on morning 3");
 
     string morning = anchoredLida.GetDialogueState(0f, anchoredProgress).npcLine;
     Require(morning.Contains("Марк", StringComparison.Ordinal) &&
             morning.Contains("помню", StringComparison.OrdinalIgnoreCase),
-        "next-morning Lida dialogue must be caused by the persisted event");
+        "morning-3 Lida dialogue must be caused by the persisted event");
 
     Console.WriteLine("FIRST_MEMORY_SPATIAL_SMOKE=PASS; scenarios=2");
     return 0;
