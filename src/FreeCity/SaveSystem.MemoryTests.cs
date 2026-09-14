@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
+using OpenTK.Mathematics;
 
 namespace Probuzhdenie.FreeCity;
 
@@ -14,11 +15,12 @@ public static partial class SaveSystem
         {
             CheckMemoryRoundTrip(paths);
             CheckOldSaveMigration(paths);
+            CheckResidentIdsPersist(paths);
             CheckMissingEventAnchorRecovery(paths);
             CheckDeclinedWitnessRemainsNonPersistent(paths);
             CheckCorruptIdDoesNotCrash(paths);
             CheckFutureSchemaBlocksOverwrite(paths);
-            message = "Memory persistence self-test passed (6 cases).";
+            message = "Memory persistence self-test passed (7 cases).";
             return true;
         }
         catch (Exception e)
@@ -95,6 +97,18 @@ public static partial class SaveSystem
             DiscoveredEggs = Array.Empty<string>(),
             TimeOfDay = 9f,
             LastSavedUtc = DateTime.UtcNow,
+            Npcs = new[]
+            {
+                new
+                {
+                    Friendliness = 23f,
+                    Trust = 17f,
+                    TimesTalked = 2,
+                    LastTalkDay = 2f,
+                    Awareness = 3f,
+                    State = nameof(NpcState.Working),
+                }
+            },
             DailyObjectiveDay = 3,
             DailyTalkProgress = 0,
             DailyObjectiveCompleted = false,
@@ -107,6 +121,31 @@ public static partial class SaveSystem
         RequireMemory(loaded.progress.Ledger.Events.Count == 0 && loaded.progress.Ledger.Anchors.Count == 0,
             "legacy save should migrate with an empty ledger");
         RequireMemory(!loaded.progress.SaveWritesBlocked, "legacy save should remain writable after migration");
+        RequireMemory(loaded.npcs?.Count == 1 && loaded.npcs[0].PersistentId == null,
+            "legacy NPC rows without PersistentId must remain readable without invented identity");
+    }
+
+    private static void CheckResidentIdsPersist(List<string> paths)
+    {
+        string path = TempSavePath(paths, "resident-ids");
+        var residents = new List<NpcCharacter>
+        {
+            new(Vector3.Zero, Vector3.Zero, 8101),
+            new(Vector3.One, Vector3.One, 8102),
+            new(new Vector3(2,0,2), new Vector3(2,0,2), 8103),
+        };
+        ResidentIdentity.BindCity(residents);
+
+        SaveToPath(path, 333, new HeroProgress(), new AwarenessSystem(), 11f, DateTime.UtcNow, residents);
+        var loaded = LoadFromPath(path);
+        RequireMemory(loaded.npcs?.Count == residents.Count, "resident rows must survive save/load");
+        for (int i = 0; i < residents.Count; i++)
+        {
+            RequireMemory(loaded.npcs![i].PersistentId == i,
+                "saved resident PersistentId must equal deterministic city slot");
+            RequireMemory(ResidentIdentity.GetPersistentId(residents[i]) == i,
+                "runtime resident mapping must use the same world-local slot");
+        }
     }
 
     private static void CheckMissingEventAnchorRecovery(List<string> paths)
