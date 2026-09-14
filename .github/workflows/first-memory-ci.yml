@@ -13,6 +13,7 @@ on:
       - "feat/persistent-npc-awakening"
       - "test/dayloop-20-cycle"
       - "feat/npc-street-routing"
+      - "feat/first-memory-three-mornings"
   workflow_dispatch:
 
 jobs:
@@ -49,3 +50,6 @@ jobs:
 
       - name: NPC route smoke
         run: dotnet run --project tests/NpcRouteSmoke/NpcRouteSmoke.csproj --configuration Release
+
+      - name: First Memory three-morning chapter smoke
+        run: dotnet run --project tests/FirstMemoryThreeMorningsSmoke/FirstMemoryThreeMorningsSmoke.csproj --configuration Release
