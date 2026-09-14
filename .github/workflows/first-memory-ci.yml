@@ -10,6 +10,7 @@ on:
       - "feat/stable-resident-id"
       - "feat/player-spatial-save"
       - "feat/save-backup-recovery"
+      - "feat/persistent-npc-awakening"
   workflow_dispatch:
 
 jobs:
