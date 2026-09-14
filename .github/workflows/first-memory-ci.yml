@@ -11,6 +11,7 @@ on:
       - "feat/player-spatial-save"
       - "feat/save-backup-recovery"
       - "feat/persistent-npc-awakening"
+      - "test/dayloop-20-cycle"
   workflow_dispatch:
 
 jobs:
@@ -41,3 +42,6 @@ jobs:
 
       - name: Stable resident identity smoke
         run: dotnet run --project tests/StableResidentIdSmoke/StableResidentIdSmoke.csproj --configuration Release
+
+      - name: 20-cycle DayLoop durability smoke
+        run: dotnet run --project tests/DayLoopDurabilitySmoke/DayLoopDurabilitySmoke.csproj --configuration Release
