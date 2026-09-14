@@ -68,6 +68,18 @@ public static class PlayerSpatialPersistence
             PendingByProgress.Add(progress, new PendingBox { Data = data });
     }
 
+    internal static bool TryGetPending(HeroProgress progress, out SaveSystem.PlayerSpatialSaveData? data)
+    {
+        if (PendingByProgress.TryGetValue(progress, out PendingBox? pending))
+        {
+            data = pending.Data;
+            return true;
+        }
+
+        data = null;
+        return false;
+    }
+
     public static SaveSystem.PlayerSpatialSaveData? Capture(IReadOnlyList<NpcCharacter>? npcs)
     {
         if (npcs == null || npcs.Count == 0) return null;
