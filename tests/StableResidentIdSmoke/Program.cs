@@ -24,7 +24,7 @@ try
     const int seed = 424242;
     var progressA = new HeroProgress();
     var cityA = new CityRenderer(seed, progressA);
-    _ = new InteractionDetector(cityA); // binds world-local resident ids
+    var detectorA = new InteractionDetector(cityA); // binds world-local resident ids + chapter spatial roles
 
     var idsA = new List<int>();
     var uniqueA = new HashSet<int>();
@@ -45,6 +45,8 @@ try
     lida.ApplyChoice(
         FindAction(lida.GetDialogueState(0f, progressA).choices, FirstMemorySlice.InspectSignalActionId),
         progressA);
+    progressA.NewDay();
+    _ = detectorA.Detect(FirstMemorySpatial.SignalPosition); // sync spatial morning gate
     lida.ApplyChoice(
         FindAction(lida.GetDialogueState(0f, progressA).choices, FirstMemorySlice.HelpLidaActionId),
         progressA);
