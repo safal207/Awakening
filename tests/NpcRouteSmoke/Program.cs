@@ -5,6 +5,7 @@ using Probuzhdenie.FreeCity;
 
 const int Seed = 424242;
 const float Radius = 0.20f;
+const float CollisionRadius = 0.25f;
 const float Dt = 0.10f;
 const float MaxWalkingStallSeconds = 8f;
 const int Steps = 2600; // 26 in-game hours at the current 0.1 h/s world clock.
@@ -23,7 +24,8 @@ try
         CheckRoute(city, npc.WorkPos, npc.HomePos, $"resident {i} work->home", ref routesChecked, ref maxWaypoints);
     }
 
-    city.TimeOfDay = 8f;
+    float timeOfDay = 8f;
+    int resets = 0;
     int count = city.Npcs.Count;
     var previous = new Vector3[count];
     var stallSeconds = new float[count];
@@ -34,11 +36,33 @@ try
 
     for (int step = 0; step < Steps; step++)
     {
-        city.UpdateNpcs(Dt);
+        // Headless equivalent of the non-rendering portion of CityRenderer.UpdateNpcs:
+        // advance world time, apply Sverka/reset at midnight, update each NPC and
+        // retain the existing collision clamp as the final numerical safety net.
+        timeOfDay += Dt * 0.1f;
+        if (timeOfDay >= 24f)
+        {
+            timeOfDay -= 24f;
+            city.Progress.NewDay();
+            foreach (NpcCharacter npc in city.Npcs)
+                npc.Reset();
+            resets++;
+
+            // A reset is an intentional teleport home, not routed travel or a stall.
+            for (int i = 0; i < count; i++)
+            {
+                previous[i] = city.Npcs[i].Position;
+                stallSeconds[i] = 0f;
+            }
+        }
 
         for (int i = 1; i < count; i++) // player is controlled elsewhere, 49 residents are AI-routed
         {
             NpcCharacter npc = city.Npcs[i];
+            npc.Update(timeOfDay, Dt);
+            if (npc.State != NpcState.Sleeping)
+                npc.Position = city.ClampToWalkable(npc.Position, CollisionRadius);
+
             Require(Finite(npc.Position), $"resident {i} produced non-finite position at step {step}");
             Require(city.IsPositionWalkable(npc.Position, Radius),
                 $"resident {i} ended inside static obstacle at step {step}: {npc.Position}");
@@ -57,6 +81,8 @@ try
         }
     }
 
+    Require(resets >= 1, "route soak must cross at least one midnight reset");
+
     float worstStall = 0f;
     float minTravelled = float.MaxValue;
     for (int i = 1; i < count; i++)
@@ -68,7 +94,7 @@ try
     }
 
     Console.WriteLine(
-        $"NPC_ROUTE_SMOKE=PASS; residents=50; routed_npcs=49; routes={routesChecked}; " +
+        $"NPC_ROUTE_SMOKE=PASS; residents=50; routed_npcs=49; routes={routesChecked}; resets={resets}; " +
         $"max_waypoints={maxWaypoints}; worst_walking_stall={worstStall:F1}s; min_travel={minTravelled:F1}m");
 }
 catch (Exception e)
