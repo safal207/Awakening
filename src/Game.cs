@@ -41,7 +41,7 @@ public class Game : GameWindow
     private readonly RuntimeProfiler? _runtimeProfiler;
     private readonly GameSettings _settings;
     private readonly string[] _mainMenuItems = { "НАЧАТЬ", "НАСТРОЙКИ", "ВЫХОД" };
-    private readonly string[] _pauseMenuItems = { "ПРОДОЛЖИТЬ", "НАСТРОЙКИ", "ВЫХОД" };
+    private readonly string[] _pauseMenuItems = { "ПРОДОЛЖИТЬ", "ЗАКОНЧИТЬ ДЕНЬ", "НАСТРОЙКИ", "ВЫХОД" };
     private readonly string[] _endingMenuItems = { "ПРОДОЛЖИТЬ ИССЛЕДОВАНИЕ", "ВЫХОД" };
     private readonly (int Width, int Height)[] _resolutions =
     {
@@ -490,7 +490,8 @@ public class Game : GameWindow
         }
 
         if (_menuIndex == 0) ResumeGame();
-        else if (_menuIndex == 1) OpenSettings(GameScreen.PauseMenu);
+        else if (_menuIndex == 1) EndDayEarly();
+        else if (_menuIndex == 2) OpenSettings(GameScreen.PauseMenu);
         else Close();
     }
 
@@ -567,6 +568,35 @@ public class Game : GameWindow
         _captured = false;
         CursorState = CursorState.Normal;
         Title = $"{GameTitle} - Меню";
+    }
+
+    private void EndDayEarly()
+    {
+        if (_city == null)
+        {
+            ResumeGame();
+            return;
+        }
+
+        // Persist the exact end-of-day state first. The second save below then
+        // promotes this valid file to .bak while storing the new morning as primary.
+        _city.SaveGame();
+
+        int transitions = _city.AdvanceToNextMorning();
+        _city.SaveGame();
+
+        _saveTimer = 0f;
+        _dialogueTimer = 0f;
+        _currentInteraction = default;
+        _playerController?.ResetMotion();
+
+        ResumeGame();
+        SnapCameraBehindHero();
+
+        _dialogueFeedback = transitions == 1
+            ? $"СВЕРКА ЗАВЕРШЕНА  ·  УТРО {_city.Progress.Day}"
+            : $"ПЕРЕХОД ДНЯ: {transitions}";
+        _dialogueFeedbackTimer = 4.5f;
     }
 
     private void OpenEnding()

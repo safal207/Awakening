@@ -16,6 +16,7 @@ on:
       - "feat/first-memory-three-mornings"
       - "feat/observation-journal"
       - "feat/story-findings"
+      - "feat/early-sleep"
   workflow_dispatch:
 
 jobs:
@@ -61,3 +62,6 @@ jobs:
 
       - name: Story findings smoke
         run: dotnet run --project tests/StoryFindingsSmoke/StoryFindingsSmoke.csproj --configuration Release
+
+      - name: Early sleep smoke
+        run: dotnet run --project tests/EarlySleepSmoke/EarlySleepSmoke.csproj --configuration Release
