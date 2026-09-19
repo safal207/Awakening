@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - "feat/m2-playtest-kit"
+      - "codex/awakening-concept-visuals"
 
 jobs:
   build-windows-playtest:
