@@ -13,6 +13,7 @@ internal static class CityFacadeDetails
         SceneGeometry.Box(v,new(x-0.16f,h-0.38f,z-0.16f),new(w+0.32f,0.13f,d+0.32f),stone);
         SceneGeometry.Box(v,new(x+0.5f,h+0.05f,z+0.5f),new(w-1,0.3f,d-1),new(0.29f,0.32f,0.32f));
         SceneGeometry.Box(v,new(x+1,h+0.35f,z+1),new(1.3f,0.72f,1.6f),new(0.47f,0.50f,0.48f));
+        DepotDistrict.AppendFacade(v, b);
         if (b.Type is BuildingType.House or BuildingType.Apartment or BuildingType.Cafe)
         {
             for(int floor=1;floor<Math.Min(b.Height,6);floor++)
