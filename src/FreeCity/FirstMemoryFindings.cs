@@ -27,7 +27,7 @@ public static class FirstMemoryFindings
             "Следы на реле",
             ObservationKind.Fact,
             "Винты корпуса реле исцарапаны так, будто его вскрывали и собирали много раз.",
-            Ground(FirstMemorySpatial.SignalPosition + new Vector3(1.4f, 0f, -1.7f)),
+            Ground(FirstMemorySpatial.SignalPosition + new Vector3(0.4f, 0f, -1.7f)),
             1),
         new(
             "repeated_timetable_correction",
