@@ -1,0 +1,86 @@
+name: M2 Playtest Build
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "feat/m2-playtest-kit"
+      - "codex/awakening-concept-visuals"
+
+jobs:
+  build-windows-playtest:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Restore
+        run: dotnet restore
+
+      - name: Functional tests
+        run: dotnet run --configuration Release -- --functional-test
+
+      - name: Self-tests
+        run: dotnet run --configuration Release -- --self-test
+
+      - name: Publish self-contained Windows x64
+        run: >
+          dotnet publish Probuzhdenie.csproj
+          --configuration Release
+          --runtime win-x64
+          --self-contained true
+          --output dist/Awakening-M2
+          -p:PublishSingleFile=false
+          -p:DebugType=None
+          -p:DebugSymbols=false
+
+      - name: Add blind playtest files
+        shell: bash
+        run: |
+          cp docs/playtest/PLAYER_BRIEF.txt dist/Awakening-M2/START_HERE.txt
+          cp docs/playtest/RESET_PLAYTEST_SAVE.bat dist/Awakening-M2/RESET_PLAYTEST_SAVE.bat
+          printf "Awakening M2 blind playtest\nCommit SHA: %s\nSource branch: %s\nTarget: win-x64 self-contained\n" \
+            "$GITHUB_SHA" "$GITHUB_REF_NAME" > dist/Awakening-M2/BUILD_MANIFEST.txt
+
+      - name: Verify package contents
+        shell: bash
+        run: |
+          test -f dist/Awakening-M2/Probuzhdenie.exe
+          test -d dist/Awakening-M2/assets
+          test -f dist/Awakening-M2/START_HERE.txt
+          test -f dist/Awakening-M2/RESET_PLAYTEST_SAVE.bat
+          grep -F "$GITHUB_SHA" dist/Awakening-M2/BUILD_MANIFEST.txt
+          if find dist/Awakening-M2 \( -iname "*OBSERVER*" -o -iname "*RESULT_TEMPLATE*" \) | grep -q .; then
+            echo "Observer-only material leaked into player artifact."
+            exit 1
+          fi
+
+      - name: Build zip
+        shell: pwsh
+        run: |
+          $short = "${env:GITHUB_SHA}".Substring(0, 8)
+          $zip = "dist/Awakening-M2-playtest-win-x64-$short.zip"
+          Compress-Archive -Path "dist/Awakening-M2/*" -DestinationPath $zip -Force
+          "PLAYTEST_ZIP=$zip" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "PLAYTEST_NAME=Awakening-M2-playtest-win-x64-$short" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Verify zip
+        shell: bash
+        run: |
+          test -s "$PLAYTEST_ZIP"
+          unzip -l "$PLAYTEST_ZIP" | grep -F "Probuzhdenie.exe"
+          unzip -l "$PLAYTEST_ZIP" | grep -F "BUILD_MANIFEST.txt"
+          unzip -l "$PLAYTEST_ZIP" | grep -F "START_HERE.txt"
+
+      - name: Upload player artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.PLAYTEST_NAME }}
+          path: ${{ env.PLAYTEST_ZIP }}
+          if-no-files-found: error
+          retention-days: 14
