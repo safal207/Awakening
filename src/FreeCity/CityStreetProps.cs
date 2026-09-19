@@ -32,11 +32,12 @@ internal static class CityStreetProps
 
         if (b.X == 0 && b.Z == 0)
         {
+            DepotDistrict.AppendStreetProps(v, b);
             AppendFirstMemorySignal(v);
             FirstMemoryFindings.AppendProps(v);
         }
 
-        if (b.Type is not (BuildingType.Tree or BuildingType.Lamp))
+        if (b.Type is not (BuildingType.Tree or BuildingType.Lamp or BuildingType.Depot))
         {
             SceneGeometry.Cylinder(v,new(b.X-1.9f,0.12f,b.Z+7),new(b.X-1.9f,0.7f,b.Z+7),0.16f,new(0.61f,0.14f,0.10f));
             SceneGeometry.Foliage(v,new(b.X-1.9f,0.74f,b.Z+7),new(0.19f,0.11f,0.19f),new(0.65f,0.18f,0.12f));

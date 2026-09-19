@@ -17,6 +17,7 @@ on:
       - "feat/observation-journal"
       - "feat/story-findings"
       - "feat/early-sleep"
+      - "feat/depot-district"
   workflow_dispatch:
 
 jobs:
@@ -65,3 +66,6 @@ jobs:
 
       - name: Early sleep smoke
         run: dotnet run --project tests/EarlySleepSmoke/EarlySleepSmoke.csproj --configuration Release
+
+      - name: Depot district smoke
+        run: dotnet run --project tests/DepotDistrictSmoke/DepotDistrictSmoke.csproj --configuration Release

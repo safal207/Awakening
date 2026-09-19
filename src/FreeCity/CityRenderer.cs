@@ -495,7 +495,8 @@ public class CityRenderer : IDisposable
                 block.Z + buildingInset,
                 block.X + block.Width - buildingInset,
                 block.Z + block.Depth - buildingInset));
-            _buildingBounds.Add(CityStreetProps.ParkedCarBounds(block));
+            if (block.Type != BuildingType.Depot)
+                _buildingBounds.Add(CityStreetProps.ParkedCarBounds(block));
         }
         BuildInterestMarkers();
         SpawnNpcs(seed);
