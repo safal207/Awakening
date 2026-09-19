@@ -86,6 +86,7 @@ public class Game : GameWindow
     private GameScreen _settingsReturnScreen = GameScreen.MainMenu;
     private bool _endingAcknowledged;
     private bool _journalOpen;
+    private int _journalPage;
 
     public Game(RuntimeProfileOptions? profileOptions = null) : this(profileOptions, GameSettings.Load())
     {
@@ -214,6 +215,13 @@ public class Game : GameWindow
 
         if (_journalOpen)
         {
+            ObservationJournal journal = ObservationJournalState.For(_city!.Progress);
+            int pageCount = Math.Max(1, (journal.Entries.Count + 7) / 8);
+            if (_input.KeyPressed(Keys.Up) || _input.KeyPressed(Keys.W) || _input.GpLeftY < -0.5f)
+                _journalPage = Math.Max(0, _journalPage - 1);
+            else if (_input.KeyPressed(Keys.Down) || _input.KeyPressed(Keys.S) || _input.GpLeftY > 0.5f)
+                _journalPage = Math.Min(pageCount - 1, _journalPage + 1);
+
             if (_input.KeyPressed(Keys.Tab) || _input.KeyPressed(Keys.Escape) || _input.GpBPressed)
                 CloseObservationJournal();
             return;
@@ -310,6 +318,19 @@ public class Game : GameWindow
                     break;
                 case InteractionType.Talk:
                     StartDialogue(_currentInteraction.TargetNpc!);
+                    break;
+                case InteractionType.Finding:
+                    if (!string.IsNullOrWhiteSpace(_currentInteraction.FindingId) &&
+                        FirstMemoryFindings.TryDiscover(
+                            _city.Progress,
+                            _currentInteraction.FindingId,
+                            out StoryFinding? finding) &&
+                        finding != null)
+                    {
+                        _dialogueFeedback = $"ЖУРНАЛ: {finding.Title.ToUpperInvariant()}";
+                        _dialogueFeedbackTimer = 3f;
+                        _city.SaveGame();
+                    }
                     break;
             }
         }
@@ -950,6 +971,7 @@ public class Game : GameWindow
         if (_city == null || _dialogueNpc != null) return;
         _city.SaveGame();
         _journalOpen = true;
+        _journalPage = 0;
         _captured = false;
         CursorState = CursorState.Normal;
         Title = $"{GameTitle} - Журнал";
@@ -983,17 +1005,20 @@ public class Game : GameWindow
         _ui.Rect(px, py, pw, ph, bg);
         _ui.Rect(px, py, 0.006f, ph, border);
         _ui.Text("ЖУРНАЛ НАБЛЮДЕНИЙ", px + pad, py + 0.025f, 0.0052f, text);
-        _ui.Text("TAB / ESC — ЗАКРЫТЬ", px + pw - 0.19f, py + 0.030f, 0.0032f, dim);
+        const int maxRows = 8;
+        int pageCount = Math.Max(1, (journal.Entries.Count + maxRows - 1) / maxRows);
+        _journalPage = Math.Clamp(_journalPage, 0, pageCount - 1);
+        _ui.Text("↑/↓ ЛИСТАТЬ   TAB / ESC — ЗАКРЫТЬ", px + pw - 0.31f, py + 0.030f, 0.0028f, dim);
         _ui.Rect(px + pad, py + 0.075f, pw - pad * 2, 0.002f, new Vector3(0.10f, 0.13f, 0.15f));
 
         float y = py + 0.10f;
         const float rowH = 0.083f;
-        const int maxRows = 8;
-        int shown = 0;
+        int start = _journalPage * maxRows;
+        int end = Math.Min(journal.Entries.Count, start + maxRows);
 
-        foreach (ObservationEntry entry in journal.Entries)
+        for (int index = start; index < end; index++)
         {
-            if (shown >= maxRows) break;
+            ObservationEntry entry = journal.Entries[index];
 
             string kind = entry.Kind switch
             {
@@ -1020,7 +1045,6 @@ public class Game : GameWindow
             _ui.Rect(px + pad, y + 0.067f, pw - pad * 2, 0.0015f, new Vector3(0.07f, 0.09f, 0.10f));
 
             y += rowH;
-            shown++;
         }
 
         if (journal.Entries.Count == 0)
@@ -1028,9 +1052,9 @@ public class Game : GameWindow
             _ui.Text("Пока нечего записывать. Наблюдай за повторениями и решениями людей.",
                 px + pad, py + 0.145f, 0.0037f, dim);
         }
-        else if (journal.Entries.Count > maxRows)
+        else if (pageCount > 1)
         {
-            _ui.Text($"+ ЕЩЁ {journal.Entries.Count - maxRows}", px + pad, py + ph - 0.045f, 0.0032f, dim);
+            _ui.Text($"СТРАНИЦА {_journalPage + 1}/{pageCount}", px + pad, py + ph - 0.045f, 0.0032f, dim);
         }
     }
 
