@@ -85,6 +85,7 @@ public class Game : GameWindow
     private bool _rotatingPreview;
     private GameScreen _settingsReturnScreen = GameScreen.MainMenu;
     private bool _endingAcknowledged;
+    private bool _journalOpen;
 
     public Game(RuntimeProfileOptions? profileOptions = null) : this(profileOptions, GameSettings.Load())
     {
@@ -208,6 +209,19 @@ public class Game : GameWindow
         {
             _heroPreviewTime += dt;
             UpdateMenu();
+            return;
+        }
+
+        if (_journalOpen)
+        {
+            if (_input.KeyPressed(Keys.Tab) || _input.KeyPressed(Keys.Escape) || _input.GpBPressed)
+                CloseObservationJournal();
+            return;
+        }
+
+        if (_dialogueNpc == null && _input.KeyPressed(Keys.Tab))
+        {
+            OpenObservationJournal();
             return;
         }
 
@@ -870,7 +884,7 @@ public class Game : GameWindow
         float y = 0.03f;
         float line = 0.033f;
 
-        float panelH = _city.IsInside ? 0.278f : 0.245f;
+        float panelH = _city.IsInside ? 0.311f : 0.278f;
         _ui.Rect(0.014f, 0.018f, 0.245f, panelH, panel);
         _ui.Rect(0.014f, 0.018f, 0.006f, panelH, accent);
 
@@ -894,6 +908,8 @@ public class Game : GameWindow
         {
             _ui.Text($"ЦЕЛЬ {_city.Progress.DailyTalkProgress}/{HeroProgress.DailyTalkGoal}", x, y, uiScale, warm);
         }
+        y += line;
+        _ui.Text("TAB  ЖУРНАЛ", x, y, uiScale * 0.9f, new Vector3(0.55f, 0.72f, 0.82f));
         y += line;
 
         if (_city.IsInside)
@@ -925,7 +941,97 @@ public class Game : GameWindow
         RenderFeedback();
         if (_dialogueNpc != null) RenderDialogue();
         RenderDialogueFeedback();
+        if (_journalOpen) RenderObservationJournal();
         _ui.Render(_shader, _modelL, _viewL, _projL, _colorL, _ambL, _lightL, _fogColL);
+    }
+
+    private void OpenObservationJournal()
+    {
+        if (_city == null || _dialogueNpc != null) return;
+        _city.SaveGame();
+        _journalOpen = true;
+        _captured = false;
+        CursorState = CursorState.Normal;
+        Title = $"{GameTitle} - Журнал";
+    }
+
+    private void CloseObservationJournal()
+    {
+        if (!_journalOpen) return;
+        _journalOpen = false;
+        CaptureMouse();
+        Title = GameTitle;
+    }
+
+    private void RenderObservationJournal()
+    {
+        if (_city == null) return;
+
+        ObservationJournal journal = ObservationJournalState.For(_city.Progress);
+        Vector3 bg = new(0.025f, 0.032f, 0.038f);
+        Vector3 border = new(0.16f, 0.48f, 0.78f);
+        Vector3 text = new(0.88f, 0.92f, 0.93f);
+        Vector3 dim = new(0.58f, 0.66f, 0.70f);
+        Vector3 warm = new(1f, 0.8f, 0.2f);
+
+        const float px = 0.14f;
+        const float py = 0.10f;
+        const float pw = 0.72f;
+        const float ph = 0.80f;
+        const float pad = 0.025f;
+
+        _ui.Rect(px, py, pw, ph, bg);
+        _ui.Rect(px, py, 0.006f, ph, border);
+        _ui.Text("ЖУРНАЛ НАБЛЮДЕНИЙ", px + pad, py + 0.025f, 0.0052f, text);
+        _ui.Text("TAB / ESC — ЗАКРЫТЬ", px + pw - 0.19f, py + 0.030f, 0.0032f, dim);
+        _ui.Rect(px + pad, py + 0.075f, pw - pad * 2, 0.002f, new Vector3(0.10f, 0.13f, 0.15f));
+
+        float y = py + 0.10f;
+        const float rowH = 0.083f;
+        const int maxRows = 8;
+        int shown = 0;
+
+        foreach (ObservationEntry entry in journal.Entries)
+        {
+            if (shown >= maxRows) break;
+
+            string kind = entry.Kind switch
+            {
+                ObservationKind.Fact => "ФАКТ",
+                ObservationKind.Question => "ВОПРОС",
+                ObservationKind.Promise => "ОБЕЩАНИЕ",
+                ObservationKind.OpenMeeting => "ВСТРЕЧА",
+                _ => "ЗАПИСЬ",
+            };
+            string status = entry.Status switch
+            {
+                ObservationStatus.Completed => "  [ЗАВЕРШЕНО]",
+                ObservationStatus.NotCompleted => "  [НЕ ЗАВЕРШЕНО]",
+                _ => "",
+            };
+
+            Vector3 kindColor = entry.Kind == ObservationKind.Question ? warm : border;
+            _ui.Text($"ДЕНЬ {entry.Day}  ·  {kind}{status}", px + pad, y, 0.0034f, kindColor);
+
+            float bodySize = 0.00335f;
+            float measuredAtOne = Math.Max(0.001f, _ui.MeasureText(entry.Text, 1f));
+            bodySize = Math.Max(0.00245f, Math.Min(bodySize, (pw - pad * 2) / measuredAtOne));
+            _ui.Text(entry.Text, px + pad, y + 0.030f, bodySize, text);
+            _ui.Rect(px + pad, y + 0.067f, pw - pad * 2, 0.0015f, new Vector3(0.07f, 0.09f, 0.10f));
+
+            y += rowH;
+            shown++;
+        }
+
+        if (journal.Entries.Count == 0)
+        {
+            _ui.Text("Пока нечего записывать. Наблюдай за повторениями и решениями людей.",
+                px + pad, py + 0.145f, 0.0037f, dim);
+        }
+        else if (journal.Entries.Count > maxRows)
+        {
+            _ui.Text($"+ ЕЩЁ {journal.Entries.Count - maxRows}", px + pad, py + ph - 0.045f, 0.0032f, dim);
+        }
     }
 
     private void RenderFeedback()

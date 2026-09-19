@@ -26,6 +26,7 @@ public static class FirstMemorySlice
     public const string HelpLidaActionId = "leave_signal_repair_to_help_lida";
     public const string RepairPromiseActionId = "finish_promised_signal_repair";
     public const string AcceptWitnessActionId = "mark_accepts_memory_witness";
+    public const string DeclineWitnessActionId = "mark_declines_memory_witness";
     public const string NikaArchiveActionId = "nika_archives_consented_meeting";
     public const string TraceId = "dispatcher_note";
     public const string RepairTraceId = "maintenance_log";
@@ -224,7 +225,10 @@ public static class FirstMemorySlice
                             "Если хочешь — согласись быть свидетелем. Без твоего решения записи не будет.",
                             3, 5, 2, 2, 4, 2, 2,
                             AcceptWitnessActionId),
-                        new DialogueChoice("Не соглашайся ради нас. Это твоя память.", 1, 3, 0, 0, 4, 1, 2),
+                        new DialogueChoice(
+                            "Не соглашайся ради нас. Это твоя память.",
+                            1, 3, 0, 0, 4, 1, 2,
+                            DeclineWitnessActionId),
                     });
                 return true;
             }
@@ -296,6 +300,7 @@ public static class FirstMemorySlice
         {
             chapter.MarkInvestigation(progress.Day);
             FirstMemorySpatial.MarkSignalObserved(progress);
+            FirstMemoryJournal.RecordInvestigation(progress);
             return true;
         }
 
@@ -303,6 +308,7 @@ public static class FirstMemorySlice
         {
             bool changed = chapter.MarkRoutineRepair(progress.Day);
             FirstMemorySpatial.MarkSignalObserved(progress);
+            if (changed) FirstMemoryJournal.RecordRoutineRepair(progress);
             return changed;
         }
 
@@ -320,6 +326,7 @@ public static class FirstMemorySlice
             if (!ledger.TryRecordEvent(memoryEvent)) return false;
             if (!chapter.TryChooseBranch(FirstMemoryBranch.Meeting, progress.Day)) return false;
             BringMarkToMeeting(npc, progress);
+            FirstMemoryJournal.RecordMeetingBranch(progress);
             return true;
         }
 
@@ -336,28 +343,41 @@ public static class FirstMemorySlice
                 Description: "Герой закончил обещанный ремонт сигнала до последнего рейса.");
             if (!ledger.TryRecordEvent(repairEvent)) return false;
             if (!chapter.TryChooseBranch(FirstMemoryBranch.Repair, progress.Day)) return false;
-            return ledger.TryCreateAnchor(
+            bool anchored = ledger.TryCreateAnchor(
                 RepairEventId,
                 RepairTraceId,
                 ResidentIdentity.GetPersistentId(npc),
                 WitnessConsent.Accepted);
+            if (anchored) FirstMemoryJournal.RecordRepairBranch(progress);
+            return anchored;
         }
 
         if (choice.ActionId == AcceptWitnessActionId && npc.NarrativeRole == NarrativeRole.Mark &&
             chapter.Branch == FirstMemoryBranch.Meeting)
         {
-            return ledger.TryCreateAnchor(
+            bool anchored = ledger.TryCreateAnchor(
                 EventId,
                 TraceId,
                 ResidentIdentity.GetPersistentId(npc),
                 WitnessConsent.Accepted);
+            if (anchored) FirstMemoryJournal.RecordWitnessAccepted(progress);
+            return anchored;
+        }
+
+        if (choice.ActionId == DeclineWitnessActionId && npc.NarrativeRole == NarrativeRole.Mark &&
+            chapter.Branch == FirstMemoryBranch.Meeting)
+        {
+            FirstMemoryJournal.RecordWitnessDeclined(progress);
+            return true;
         }
 
         if (choice.ActionId == NikaArchiveActionId && npc.NarrativeRole == NarrativeRole.Nika &&
             chapter.IsOutcomeMorning(progress.Day) && chapter.Branch == FirstMemoryBranch.Meeting &&
             ledger.IsPersisted(EventId) && MeetingHasMarkConsent(ledger))
         {
-            return chapter.MarkNikaArchived();
+            bool archived = chapter.MarkNikaArchived();
+            if (archived) FirstMemoryJournal.RecordNikaArchive(progress);
+            return archived;
         }
 
         return false;
