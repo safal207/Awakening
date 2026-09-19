@@ -14,6 +14,7 @@ on:
       - "test/dayloop-20-cycle"
       - "feat/npc-street-routing"
       - "feat/first-memory-three-mornings"
+      - "feat/observation-journal"
   workflow_dispatch:
 
 jobs:
@@ -53,3 +54,6 @@ jobs:
 
       - name: First Memory three-morning chapter smoke
         run: dotnet run --project tests/FirstMemoryThreeMorningsSmoke/FirstMemoryThreeMorningsSmoke.csproj --configuration Release
+
+      - name: Observation journal smoke
+        run: dotnet run --project tests/ObservationJournalSmoke/ObservationJournalSmoke.csproj --configuration Release
