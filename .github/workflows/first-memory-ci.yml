@@ -15,6 +15,7 @@ on:
       - "feat/npc-street-routing"
       - "feat/first-memory-three-mornings"
       - "feat/observation-journal"
+      - "feat/story-findings"
   workflow_dispatch:
 
 jobs:
@@ -57,3 +58,6 @@ jobs:
 
       - name: Observation journal smoke
         run: dotnet run --project tests/ObservationJournalSmoke/ObservationJournalSmoke.csproj --configuration Release
+
+      - name: Story findings smoke
+        run: dotnet run --project tests/StoryFindingsSmoke/StoryFindingsSmoke.csproj --configuration Release
