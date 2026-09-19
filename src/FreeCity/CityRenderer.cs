@@ -25,6 +25,8 @@ public readonly record struct CityRenderContext(
 
 public class CityRenderer : IDisposable
 {
+    public const float DefaultMorningHour = 8f;
+    public static readonly Vector3 MorningSpawn = new(11.5f, 0.12f, 5f);
     private const int FloatsPerVertex = 9;
     private const int VertexStrideBytes = FloatsPerVertex * sizeof(float);
 
@@ -514,7 +516,7 @@ public class CityRenderer : IDisposable
 
         _player = _npcs[0];
         HeroStyle.ApplyTo(_player);
-        _player.Position = new Vector3(11.5f,0.12f,5);
+        _player.Position = MorningSpawn;
         _player.Rotation = _player.TargetRotation = 0;
     }
 
@@ -768,17 +770,7 @@ public class CityRenderer : IDisposable
 
         _timeOfDay += dt * 0.03f;
         if (_timeOfDay > 24f)
-        {
-            _timeOfDay = 0f;
-            _progress.NewDay();
-            _nightWalkAwarded = false;
-            // Reset all NPCs except player to initial state
-            foreach (var npc in _npcs)
-            {
-                if (npc == _player) continue;
-                npc.Reset();
-            }
-        }
+            ApplyDayBoundary(0f, resetPlayerPosition: false, closeInterior: false);
 
         foreach (var npc in _npcs)
         {
@@ -838,6 +830,56 @@ public class CityRenderer : IDisposable
 
         // If day just changed, we could also reset per-day eggs if desired.
         // For now, eggs are cumulative.
+    }
+
+    /// <summary>
+    /// Explicit player-driven end-of-day boundary. It uses the same core reset
+    /// path as natural midnight, but starts the next cycle at a readable morning
+    /// hour and returns the hero to the stable morning spawn.
+    /// </summary>
+    public int AdvanceToNextMorning()
+    {
+        int before = _progress.Day;
+        ApplyDayBoundary(DefaultMorningHour, resetPlayerPosition: true, closeInterior: true);
+        return _progress.Day - before;
+    }
+
+    private void ApplyDayBoundary(float nextTimeOfDay, bool resetPlayerPosition, bool closeInterior)
+    {
+        _progress.NewDay(); // exactly one Sverka for this boundary
+        _timeOfDay = Math.Clamp(nextTimeOfDay, 0f, 23.99f);
+        _nightWalkAwarded = false;
+        _standStillTimer = 0f;
+
+        foreach (NpcCharacter npc in _npcs)
+        {
+            if (npc == _player) continue;
+            npc.Reset();
+        }
+
+        if (_player != null)
+        {
+            if (resetPlayerPosition)
+            {
+                _player.Position = MorningSpawn;
+                _player.Rotation = _player.TargetRotation = 0f;
+            }
+
+            _player.Velocity = Vector3.Zero;
+            _player.AnimBlend = 0f;
+            _player.State = NpcState.Walking;
+        }
+
+        if (closeInterior && _inside)
+        {
+            _inside = false;
+            _insideBlock = null;
+            DeleteMesh(ref _interiorVao, ref _interiorVbo, ref _interiorCount, ref _interiorGpuBytes);
+        }
+
+        // Spatial chapter consequences (for example Mark staying near Lida after
+        // an anchored meeting) become visible immediately on the new morning.
+        FirstMemorySpatial.SyncDay(_progress);
     }
 
     public string GetPlayerDialogue()
