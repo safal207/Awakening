@@ -16,6 +16,7 @@ public enum BuildingType
     House,       // маленький домик
     Tree,        // дерево
     Lamp,        // фонарь
+    Depot,       // центральное трамвайное депо First Memory
 }
 
 public struct CityBlock
@@ -73,6 +74,17 @@ public static class CityGenerator
                     Color = PickColor(rng),
                     Accent = PickAccent(rng),
                 };
+
+                // Override only after every RNG draw above has happened, so adding
+                // the narrative depot does not reshuffle any seeded city state.
+                if (dx == 0 && dz == 0)
+                {
+                    block.Type = BuildingType.Depot;
+                    block.Height = 2;
+                    block.Color = new Vector3(0.43f, 0.47f, 0.46f);
+                    block.Accent = new Vector3(0.68f, 0.33f, 0.17f);
+                }
+
                 blocks.Add(block);
             }
 
