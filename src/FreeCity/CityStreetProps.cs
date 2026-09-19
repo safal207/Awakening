@@ -31,7 +31,10 @@ internal static class CityStreetProps
         }
 
         if (b.X == 0 && b.Z == 0)
+        {
             AppendFirstMemorySignal(v);
+            FirstMemoryFindings.AppendProps(v);
+        }
 
         if (b.Type is not (BuildingType.Tree or BuildingType.Lamp))
         {
