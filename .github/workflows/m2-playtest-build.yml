@@ -6,6 +6,7 @@ on:
     branches:
       - "feat/m2-playtest-kit"
       - "feat/m2-playtest-windows-smoke"
+      - "feat/local-playtest-trace"
       - "codex/awakening-concept-visuals"
 
 jobs:
@@ -45,6 +46,7 @@ jobs:
         run: |
           cp docs/playtest/PLAYER_BRIEF.txt dist/Awakening-M2/START_HERE.txt
           cp docs/playtest/RESET_PLAYTEST_SAVE.bat dist/Awakening-M2/RESET_PLAYTEST_SAVE.bat
+          cp docs/playtest/START_PLAYTEST.bat dist/Awakening-M2/START_PLAYTEST.bat
           printf "Awakening M2 blind playtest\nCommit SHA: %s\nSource branch: %s\nTarget: win-x64 self-contained\n" \
             "$GITHUB_SHA" "$GITHUB_REF_NAME" > dist/Awakening-M2/BUILD_MANIFEST.txt
 
@@ -55,6 +57,7 @@ jobs:
           test -d dist/Awakening-M2/assets
           test -f dist/Awakening-M2/START_HERE.txt
           test -f dist/Awakening-M2/RESET_PLAYTEST_SAVE.bat
+          test -f dist/Awakening-M2/START_PLAYTEST.bat
           grep -F "$GITHUB_SHA" dist/Awakening-M2/BUILD_MANIFEST.txt
           if find dist/Awakening-M2 \( -iname "*OBSERVER*" -o -iname "*RESULT_TEMPLATE*" \) | grep -q .; then
             echo "Observer-only material leaked into player artifact."
@@ -112,6 +115,7 @@ jobs:
             "package/Probuzhdenie.exe",
             "package/START_HERE.txt",
             "package/RESET_PLAYTEST_SAVE.bat",
+            "package/START_PLAYTEST.bat",
             "package/BUILD_MANIFEST.txt"
           )) {
             if (-not (Test-Path $required)) { throw "Missing packaged file: $required" }
@@ -129,23 +133,45 @@ jobs:
             throw "Observer-only material leaked into packaged player build."
           }
 
-      - name: Run packaged functional test on Windows
+      - name: Run packaged functional test with local trace
         shell: pwsh
         run: |
-          & ".\package\Probuzhdenie.exe" --functional-test
+          $trace = Join-Path $PWD "package\TRACE_SMOKE.jsonl"
+          & ".\package\Probuzhdenie.exe" --playtest-trace $trace --functional-test
           if ($LASTEXITCODE -ne 0) {
             throw "Packaged functional test failed with exit code $LASTEXITCODE"
           }
+          if (-not (Test-Path $trace)) { throw "Functional trace file was not created." }
+          $content = Get-Content $trace -Raw
+          if ($content -notmatch '"event_type":"trace_started"') { throw "Trace start marker missing." }
+          if ($content -notmatch '"event_type":"functional_test_exit"') { throw "Functional trace exit marker missing." }
 
-      - name: Run packaged self-tests on Windows
+      - name: Run packaged self-tests without overwriting prior trace
         shell: pwsh
         run: |
-          & ".\package\Probuzhdenie.exe" --self-test
+          $trace = Join-Path $PWD "package\TRACE_SMOKE.jsonl"
+          & ".\package\Probuzhdenie.exe" --playtest-trace $trace --self-test
           if ($LASTEXITCODE -ne 0) {
             throw "Packaged self-test failed with exit code $LASTEXITCODE"
+          }
+          $second = Join-Path $PWD "package\TRACE_SMOKE.1.jsonl"
+          if (-not (Test-Path $second)) { throw "Second trace did not get a unique filename." }
+          $content = Get-Content $second -Raw
+          if ($content -notmatch '"event_type":"self_test_exit"') { throw "Self-test trace exit marker missing." }
+
+      - name: Verify bounded trace schema
+        shell: pwsh
+        run: |
+          $traces = Get-ChildItem package -Filter "TRACE_SMOKE*.jsonl"
+          if ($traces.Count -ne 2) { throw "Expected exactly two smoke trace files." }
+          foreach ($trace in $traces) {
+            $content = Get-Content $trace.FullName -Raw
+            foreach ($forbidden in @("hostname", "username", "email", "position_x", "position_z", "raw_dialogue")) {
+              if ($content -match $forbidden) { throw "Forbidden trace field found: $forbidden" }
+            }
           }
 
       - name: Emit package smoke marker
         shell: pwsh
         run: |
-          Write-Host "WINDOWS_PLAYTEST_PACKAGE_SMOKE=PASS; functional=PASS; self_test=PASS; sha=$env:GITHUB_SHA"
+          Write-Host "WINDOWS_PLAYTEST_PACKAGE_SMOKE=PASS; functional=PASS; self_test=PASS; trace=PASS; sha=$env:GITHUB_SHA"
