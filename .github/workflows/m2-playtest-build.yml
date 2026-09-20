@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - "feat/m2-playtest-kit"
+      - "feat/m2-playtest-windows-smoke"
       - "codex/awakening-concept-visuals"
 
 jobs:
@@ -84,3 +85,67 @@ jobs:
           path: ${{ env.PLAYTEST_ZIP }}
           if-no-files-found: error
           retention-days: 14
+
+  smoke-packaged-windows-build:
+    needs: build-windows-playtest
+    runs-on: windows-latest
+
+    steps:
+      - name: Download player artifact
+        uses: actions/download-artifact@v4
+        with:
+          pattern: Awakening-M2-playtest-win-x64-*
+          path: downloaded
+          merge-multiple: true
+
+      - name: Expand exact player zip
+        shell: pwsh
+        run: |
+          $zip = Get-ChildItem -Path downloaded -Filter "*.zip" | Select-Object -First 1
+          if (-not $zip) { throw "Player zip was not downloaded." }
+          Expand-Archive -Path $zip.FullName -DestinationPath package -Force
+
+      - name: Verify packaged Windows payload
+        shell: pwsh
+        run: |
+          foreach ($required in @(
+            "package/Probuzhdenie.exe",
+            "package/START_HERE.txt",
+            "package/RESET_PLAYTEST_SAVE.bat",
+            "package/BUILD_MANIFEST.txt"
+          )) {
+            if (-not (Test-Path $required)) { throw "Missing packaged file: $required" }
+          }
+          if (-not (Test-Path "package/assets")) { throw "Missing packaged assets directory." }
+
+          $manifest = Get-Content "package/BUILD_MANIFEST.txt" -Raw
+          if (-not $manifest.Contains($env:GITHUB_SHA)) {
+            throw "Manifest SHA does not match workflow SHA."
+          }
+
+          $observerLeak = Get-ChildItem package -Recurse -File |
+            Where-Object { $_.Name -match "OBSERVER|RESULT_TEMPLATE|PLAYTEST_SUMMARY" }
+          if ($observerLeak) {
+            throw "Observer-only material leaked into packaged player build."
+          }
+
+      - name: Run packaged functional test on Windows
+        shell: pwsh
+        run: |
+          & ".\package\Probuzhdenie.exe" --functional-test
+          if ($LASTEXITCODE -ne 0) {
+            throw "Packaged functional test failed with exit code $LASTEXITCODE"
+          }
+
+      - name: Run packaged self-tests on Windows
+        shell: pwsh
+        run: |
+          & ".\package\Probuzhdenie.exe" --self-test
+          if ($LASTEXITCODE -ne 0) {
+            throw "Packaged self-test failed with exit code $LASTEXITCODE"
+          }
+
+      - name: Emit package smoke marker
+        shell: pwsh
+        run: |
+          Write-Host "WINDOWS_PLAYTEST_PACKAGE_SMOKE=PASS; functional=PASS; self_test=PASS; sha=$env:GITHUB_SHA"
