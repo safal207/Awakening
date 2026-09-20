@@ -1,0 +1,177 @@
+name: M2 Playtest Build
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "feat/m2-playtest-kit"
+      - "feat/m2-playtest-windows-smoke"
+      - "feat/local-playtest-trace"
+      - "codex/awakening-concept-visuals"
+
+jobs:
+  build-windows-playtest:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Restore
+        run: dotnet restore
+
+      - name: Functional tests
+        run: dotnet run --configuration Release -- --functional-test
+
+      - name: Self-tests
+        run: dotnet run --configuration Release -- --self-test
+
+      - name: Publish self-contained Windows x64
+        run: >
+          dotnet publish Probuzhdenie.csproj
+          --configuration Release
+          --runtime win-x64
+          --self-contained true
+          --output dist/Awakening-M2
+          -p:PublishSingleFile=false
+          -p:DebugType=None
+          -p:DebugSymbols=false
+
+      - name: Add blind playtest files
+        shell: bash
+        run: |
+          cp docs/playtest/PLAYER_BRIEF.txt dist/Awakening-M2/START_HERE.txt
+          cp docs/playtest/RESET_PLAYTEST_SAVE.bat dist/Awakening-M2/RESET_PLAYTEST_SAVE.bat
+          cp docs/playtest/START_PLAYTEST.bat dist/Awakening-M2/START_PLAYTEST.bat
+          printf "Awakening M2 blind playtest\nCommit SHA: %s\nSource branch: %s\nTarget: win-x64 self-contained\n" \
+            "$GITHUB_SHA" "$GITHUB_REF_NAME" > dist/Awakening-M2/BUILD_MANIFEST.txt
+
+      - name: Verify package contents
+        shell: bash
+        run: |
+          test -f dist/Awakening-M2/Probuzhdenie.exe
+          test -d dist/Awakening-M2/assets
+          test -f dist/Awakening-M2/START_HERE.txt
+          test -f dist/Awakening-M2/RESET_PLAYTEST_SAVE.bat
+          test -f dist/Awakening-M2/START_PLAYTEST.bat
+          grep -F "$GITHUB_SHA" dist/Awakening-M2/BUILD_MANIFEST.txt
+          if find dist/Awakening-M2 \( -iname "*OBSERVER*" -o -iname "*RESULT_TEMPLATE*" \) | grep -q .; then
+            echo "Observer-only material leaked into player artifact."
+            exit 1
+          fi
+
+      - name: Build zip
+        shell: pwsh
+        run: |
+          $short = "${env:GITHUB_SHA}".Substring(0, 8)
+          $zip = "dist/Awakening-M2-playtest-win-x64-$short.zip"
+          Compress-Archive -Path "dist/Awakening-M2/*" -DestinationPath $zip -Force
+          "PLAYTEST_ZIP=$zip" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "PLAYTEST_NAME=Awakening-M2-playtest-win-x64-$short" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Verify zip
+        shell: bash
+        run: |
+          test -s "$PLAYTEST_ZIP"
+          unzip -l "$PLAYTEST_ZIP" | grep -F "Probuzhdenie.exe"
+          unzip -l "$PLAYTEST_ZIP" | grep -F "BUILD_MANIFEST.txt"
+          unzip -l "$PLAYTEST_ZIP" | grep -F "START_HERE.txt"
+
+      - name: Upload player artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.PLAYTEST_NAME }}
+          path: ${{ env.PLAYTEST_ZIP }}
+          if-no-files-found: error
+          retention-days: 14
+
+  smoke-packaged-windows-build:
+    needs: build-windows-playtest
+    runs-on: windows-latest
+
+    steps:
+      - name: Download player artifact
+        uses: actions/download-artifact@v4
+        with:
+          pattern: Awakening-M2-playtest-win-x64-*
+          path: downloaded
+          merge-multiple: true
+
+      - name: Expand exact player zip
+        shell: pwsh
+        run: |
+          $zip = Get-ChildItem -Path downloaded -Filter "*.zip" | Select-Object -First 1
+          if (-not $zip) { throw "Player zip was not downloaded." }
+          Expand-Archive -Path $zip.FullName -DestinationPath package -Force
+
+      - name: Verify packaged Windows payload
+        shell: pwsh
+        run: |
+          foreach ($required in @(
+            "package/Probuzhdenie.exe",
+            "package/START_HERE.txt",
+            "package/RESET_PLAYTEST_SAVE.bat",
+            "package/START_PLAYTEST.bat",
+            "package/BUILD_MANIFEST.txt"
+          )) {
+            if (-not (Test-Path $required)) { throw "Missing packaged file: $required" }
+          }
+          if (-not (Test-Path "package/assets")) { throw "Missing packaged assets directory." }
+
+          $manifest = Get-Content "package/BUILD_MANIFEST.txt" -Raw
+          if (-not $manifest.Contains($env:GITHUB_SHA)) {
+            throw "Manifest SHA does not match workflow SHA."
+          }
+
+          $observerLeak = Get-ChildItem package -Recurse -File |
+            Where-Object { $_.Name -match "OBSERVER|RESULT_TEMPLATE|PLAYTEST_SUMMARY" }
+          if ($observerLeak) {
+            throw "Observer-only material leaked into packaged player build."
+          }
+
+      - name: Run packaged functional test with local trace
+        shell: pwsh
+        run: |
+          $trace = Join-Path $PWD "package\TRACE_SMOKE.jsonl"
+          & ".\package\Probuzhdenie.exe" --playtest-trace $trace --functional-test
+          if ($LASTEXITCODE -ne 0) {
+            throw "Packaged functional test failed with exit code $LASTEXITCODE"
+          }
+          if (-not (Test-Path $trace)) { throw "Functional trace file was not created." }
+          $content = Get-Content $trace -Raw
+          if ($content -notmatch '"event_type":"trace_started"') { throw "Trace start marker missing." }
+          if ($content -notmatch '"event_type":"functional_test_exit"') { throw "Functional trace exit marker missing." }
+
+      - name: Run packaged self-tests without overwriting prior trace
+        shell: pwsh
+        run: |
+          $trace = Join-Path $PWD "package\TRACE_SMOKE.jsonl"
+          & ".\package\Probuzhdenie.exe" --playtest-trace $trace --self-test
+          if ($LASTEXITCODE -ne 0) {
+            throw "Packaged self-test failed with exit code $LASTEXITCODE"
+          }
+          $second = Join-Path $PWD "package\TRACE_SMOKE.1.jsonl"
+          if (-not (Test-Path $second)) { throw "Second trace did not get a unique filename." }
+          $content = Get-Content $second -Raw
+          if ($content -notmatch '"event_type":"self_test_exit"') { throw "Self-test trace exit marker missing." }
+
+      - name: Verify bounded trace schema
+        shell: pwsh
+        run: |
+          $traces = Get-ChildItem package -Filter "TRACE_SMOKE*.jsonl"
+          if ($traces.Count -ne 2) { throw "Expected exactly two smoke trace files." }
+          foreach ($trace in $traces) {
+            $content = Get-Content $trace.FullName -Raw
+            foreach ($forbidden in @("hostname", "username", "email", "position_x", "position_z", "raw_dialogue")) {
+              if ($content -match $forbidden) { throw "Forbidden trace field found: $forbidden" }
+            }
+          }
+
+      - name: Emit package smoke marker
+        shell: pwsh
+        run: |
+          Write-Host "WINDOWS_PLAYTEST_PACKAGE_SMOKE=PASS; functional=PASS; self_test=PASS; trace=PASS; sha=$env:GITHUB_SHA"

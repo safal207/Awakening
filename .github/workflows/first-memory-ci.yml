@@ -1,0 +1,71 @@
+name: First Memory CI
+
+on:
+  push:
+    branches:
+      - "feat/first-memory-slice"
+      - "feat/memory-anchor-persistence"
+      - "feat/first-memory-spatial"
+      - "fix/dayloop-awareness"
+      - "feat/stable-resident-id"
+      - "feat/player-spatial-save"
+      - "feat/save-backup-recovery"
+      - "feat/persistent-npc-awakening"
+      - "test/dayloop-20-cycle"
+      - "feat/npc-street-routing"
+      - "feat/first-memory-three-mornings"
+      - "feat/observation-journal"
+      - "feat/story-findings"
+      - "feat/early-sleep"
+      - "feat/depot-district"
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Restore
+        run: dotnet restore
+
+      - name: Build
+        run: dotnet build --configuration Release --no-restore
+
+      - name: Functional tests
+        run: dotnet run --configuration Release --no-build -- --functional-test
+
+      - name: Save and memory self-tests
+        run: dotnet run --configuration Release --no-build -- --self-test
+
+      - name: First memory spatial smoke
+        run: dotnet run --project tests/FirstMemorySpatialSmoke/FirstMemorySpatialSmoke.csproj --configuration Release
+
+      - name: Stable resident identity smoke
+        run: dotnet run --project tests/StableResidentIdSmoke/StableResidentIdSmoke.csproj --configuration Release
+
+      - name: 20-cycle DayLoop durability smoke
+        run: dotnet run --project tests/DayLoopDurabilitySmoke/DayLoopDurabilitySmoke.csproj --configuration Release
+
+      - name: NPC route smoke
+        run: dotnet run --project tests/NpcRouteSmoke/NpcRouteSmoke.csproj --configuration Release
+
+      - name: First Memory three-morning chapter smoke
+        run: dotnet run --project tests/FirstMemoryThreeMorningsSmoke/FirstMemoryThreeMorningsSmoke.csproj --configuration Release
+
+      - name: Observation journal smoke
+        run: dotnet run --project tests/ObservationJournalSmoke/ObservationJournalSmoke.csproj --configuration Release
+
+      - name: Story findings smoke
+        run: dotnet run --project tests/StoryFindingsSmoke/StoryFindingsSmoke.csproj --configuration Release
+
+      - name: Early sleep smoke
+        run: dotnet run --project tests/EarlySleepSmoke/EarlySleepSmoke.csproj --configuration Release
+
+      - name: Depot district smoke
+        run: dotnet run --project tests/DepotDistrictSmoke/DepotDistrictSmoke.csproj --configuration Release
