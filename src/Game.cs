@@ -174,6 +174,7 @@ public class Game : GameWindow
 
         _playerController = new PlayerController(_city, _input, _cam);
         _interactionDetector = new InteractionDetector(_city);
+        PlaytestTrace.Record("session_start", _city.Progress.Day);
 
         if (_runtimeProfiler != null)
         {
@@ -329,6 +330,7 @@ public class Game : GameWindow
                     {
                         _dialogueFeedback = $"ЖУРНАЛ: {finding.Title.ToUpperInvariant()}";
                         _dialogueFeedbackTimer = 3f;
+                        PlaytestTrace.Record("finding_discovered", _city.Progress.Day, value: finding.Id);
                         _city.SaveGame();
                     }
                     break;
@@ -352,7 +354,12 @@ public class Game : GameWindow
             else if (_input.KeyPressed(Keys.Enter) || _input.KeyPressed(Keys.Space) || _input.GpAPressed)
             {
                 var choice = _dialogueChoices[_dialogueChoiceIndex];
-                _dialogueNpc.ApplyChoice(choice, _city!.Progress);
+                PlaytestTrace.Record(
+                    "dialogue_choice",
+                    _city!.Progress.Day,
+                    actionId: string.IsNullOrWhiteSpace(choice.ActionId) ? "generic_dialogue_choice" : choice.ActionId,
+                    value: _dialogueNpc.NarrativeRole.ToString());
+                _dialogueNpc.ApplyChoice(choice, _city.Progress);
                 _city.Awareness.Add(2f);
                 _city.RegisterTalk();
 
@@ -580,9 +587,11 @@ public class Game : GameWindow
 
         // Persist the exact end-of-day state first. The second save below then
         // promotes this valid file to .bak while storing the new morning as primary.
+        PlaytestTrace.Record("end_day_requested", _city.Progress.Day);
         _city.SaveGame();
 
         int transitions = _city.AdvanceToNextMorning();
+        PlaytestTrace.Record("morning_started", _city.Progress.Day, value: $"transitions={transitions}");
         _city.SaveGame();
 
         _saveTimer = 0f;
@@ -1002,6 +1011,7 @@ public class Game : GameWindow
         _city.SaveGame();
         _journalOpen = true;
         _journalPage = 0;
+        PlaytestTrace.Record("journal_open", _city.Progress.Day);
         _captured = false;
         CursorState = CursorState.Normal;
         Title = $"{GameTitle} - Журнал";
@@ -1011,6 +1021,7 @@ public class Game : GameWindow
     {
         if (!_journalOpen) return;
         _journalOpen = false;
+        PlaytestTrace.Record("journal_close", _city?.Progress.Day);
         CaptureMouse();
         Title = GameTitle;
     }
@@ -1278,6 +1289,8 @@ public class Game : GameWindow
 
         if (_profileOptions == null)
             _city?.SaveGame();
+        PlaytestTrace.Record("session_end", _city?.Progress.Day);
+        PlaytestTrace.Close();
         _city?.Dispose();
         _ui.Dispose();
         _heroPreview.Dispose();
