@@ -1,5 +1,11 @@
 # Awakening — Voxel PixelArt Engine
 
+![Real unmodified game screenshot recorded under Xvfb/Mesa with OpenGL](https://raw.githubusercontent.com/safal207/test-it-python/main/dist/ai-path/assets/awakening.webp)
+
+[Открыть реальный игровой кадр](https://safal207.github.io/test-it-python/ai-path/assets/awakening.webp) · [Происхождение снимка и протокол](https://github.com/safal207/test-it-python/blob/main/dist/ai-path/assets/sources.json) · [Путь ученика: C# и 3D](docs/LEARNING_PATH.md)
+
+> **Реальная игра, не AI-макет.** Кадр записан 17 октября 2026 года из запущенного десктопного движка по коммиту `a92bd1560215833a232362ad78de88335e51ac81`. Копия хранится в публичном учебном репозитории AI PATH; это отдельный источник, а не сгенерированная иллюстрация.
+
 A voxel world engine written in C# (.NET) with OpenGL 3.3 Core rendering.
 Each block face is an 8×8 pixel grid (64 colored pixels per face) — no textures, pure geometry with color.
 
@@ -77,6 +83,20 @@ build.bat
 dotnet build Probuzhdenie.csproj
 dotnet run
 ```
+
+## Проверка и путь для начинающих
+
+Для локального инженерного контроля без открытия окна игры:
+
+```bash
+dotnet build --configuration Release
+dotnet run --configuration Release -- --functional-test
+dotnet run --configuration Release -- --self-test
+```
+
+[CI workflow](.github/workflows/ci.yml) проверяет сборку и два набора тестов. Графическое поведение и скриншот требуют отдельного реального запуска. Это **десктопный проект**, не браузерная демоигра.
+
+В [учебном маршруте](docs/LEARNING_PATH.md) есть 4 небольшие задачи для первого вклада — от карты управления и работы с блоками до теста на повторное начисление награды и демонстрации FPS.
 
 ## License
 
