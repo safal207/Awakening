@@ -1368,13 +1368,26 @@ public class CityRenderer : IDisposable
         GL.Uniform3(context.ColorLocation, -1f, -1f, -1f);
         GL.Uniform3(context.FogColorLocation, fogCol.X, fogCol.Y, fogCol.Z);
 
+        // Ensure depth state for opaque 3D world
+        GL.Enable(EnableCap.DepthTest);
+        GL.DepthMask(true);
+
+        bool cullFaceWasEnabled = GL.IsEnabled(EnableCap.CullFace);
+
         if (_inside)
         {
+            // Disable culling for interior — camera is inside the room
+            GL.Disable(EnableCap.CullFace);
+
             if (_interiorCount > 0)
             {
                 GL.BindVertexArray(_interiorVao);
                 GL.DrawArrays(PrimitiveType.Triangles, 0, _interiorCount);
             }
+
+            // Restore cull face state
+            if (cullFaceWasEnabled) GL.Enable(EnableCap.CullFace);
+            else GL.Disable(EnableCap.CullFace);
             return;
         }
 
